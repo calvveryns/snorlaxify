@@ -10,10 +10,10 @@ class Settings:
         self.db_target_url = os.getenv('DB_TARGET_URL')
 
         self.vectorizer_api_url = os.getenv('VECTORIZER_API_URL')
-        self.vectorizer_model = os.getenv('VECTORIZER_MODEL', 'embeddinggemma:latest')
+        self.vectorizer_model = os.getenv('VECTORIZER_MODEL')
 
         self.llm_api_url = os.getenv('LLM_API_URL')
-        self.llm_model = os.getenv('LLM_MODEL', 'qwen3:latest')
+        self.llm_model = os.getenv('LLM_MODEL')
 
         if not self.db_source_url:
             raise ValueError("DB_SOURCE_URL environment variable is required")

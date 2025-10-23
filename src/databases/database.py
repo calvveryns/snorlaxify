@@ -1,6 +1,6 @@
 import logging
 from contextlib import contextmanager
-from typing import List
+from typing import List, Dict
 
 import psycopg2
 
@@ -48,6 +48,7 @@ class SourceDatabase(DatabaseManager):
             logger.info(f"Fetched {len(rows)} identifiers from source DB")
             return [row[0] for row in rows]
 
+
 class TargetDatabase(DatabaseManager):
     def setup_vector_extension(self):
         with self.get_cursor() as (cursor, conn):
@@ -78,7 +79,25 @@ class TargetDatabase(DatabaseManager):
         with self.get_cursor() as (cursor, conn):
             cursor.execute(insert_sql, (identifier, vector))
             conn.commit()
-            logger.info(f"Processed identifier: {identifier}")
+
+    def get_close_pairs(self) -> List[Dict[str, float]]:
+        query_sql = """
+            SELECT
+                item_one.identifier AS title_one,
+                item_two.identifier AS title_two,
+                item_one.vector <=> item_two.vector AS distance
+            FROM vector_data item_one
+            JOIN vector_data item_two ON item_one.id < item_two.id
+            WHERE item_one.vector <=> item_two.vector <= 0.15
+            ORDER BY distance;
+        """
+        with self.get_cursor() as (cursor, conn):
+            cursor.execute(query_sql)
+            rows = cursor.fetchall()
+            return [
+                {"title_one": row[0], "title_two": row[1], "distance": float(row[2])}
+                for row in rows
+            ]
 
     def commit_all_changes(self):
         with self.get_connection() as conn:

@@ -1,0 +1,32 @@
+<form class="form">
+    <h2 class="title">Duplicate finder</h2>
+
+    <div class="field">
+        <label for="username"
+            сlass="p-mb-2">
+            Логин
+        </label>
+
+        <input id="username"
+                pInputText
+                formControlName="username"
+                placeholder="Введите логин" />
+    </div>
+
+    <div class="field">
+        <label for="password">Пароль</label>
+
+        <p-password id="password"
+                    formControlName="password"
+                    [feedback]="false"
+                    toggleMask="true" 
+                    placeholder="Введите пароль" />
+    </div>
+
+
+    <button pButton
+            class="button"
+            type="submit"
+            label="Войти">
+    </button>
+  </form>

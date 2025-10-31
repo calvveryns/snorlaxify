@@ -1,0 +1,14 @@
+<p-menubar [model]="items">
+  <ng-template pTemplate="end">
+    <button pButton type="button"
+            [icon]="isDark() ? 'pi pi-sun' : 'pi pi-moon'"
+            [text]="true"
+            [rounded]="true"
+            [severity]="'secondary'"
+            aria-label="Toggle theme"
+            (click)="toggleDarkMode()">
+    </button>
+  </ng-template>
+</p-menubar>
+
+

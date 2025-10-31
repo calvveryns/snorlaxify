@@ -1,0 +1,35 @@
+:host {
+  display: block;
+  padding: 40px 80px;
+}
+
+p-table {
+  width: 100%;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.spacer {
+  flex: 1 1 auto;
+}
+
+.dialog-body {
+  display: grid;
+  gap: 8px;
+  min-width: 600px;
+}
+
+.conn-input {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+
+  button {
+    width: fit-content;
+  }
+}
+

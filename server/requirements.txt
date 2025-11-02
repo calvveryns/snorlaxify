@@ -1,0 +1,5 @@
+pydantic
+requests~=2.32.5
+python-dotenv~=1.2.1
+psycopg2-binary~=2.9.11
+tqdm~=4.67.1

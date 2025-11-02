@@ -83,7 +83,7 @@ class SourceDatabase(DatabaseManager):
                 item_one.vector <=> item_two.vector AS distance
             FROM vector_data item_one
             JOIN vector_data item_two ON item_one.id < item_two.id
-            WHERE item_one.vector <=> item_two.vector <= 0.15
+            WHERE item_one.vector <=> item_two.vector <= 0.35
             ORDER BY distance;
         """
         with self.get_cursor() as (cursor, conn):

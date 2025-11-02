@@ -10,8 +10,9 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U admin" ]
+      test: [ "CMD-SHELL", "pg_isready -U admin -d source" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -21,14 +22,13 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: snorlaxify-api
+    network_mode: host
     environment:
-      DB_SOURCE_URL: postgresql://admin:admin@postgres:5432/source
+      DB_SOURCE_URL: postgresql://admin:admin@localhost:5432/source
       VECTORIZER_API_URL: ${VECTORIZER_API_URL}
       VECTORIZER_MODEL: ${VECTORIZER_MODEL}
       LLM_API_URL: ${LLM_API_URL}
       LLM_MODEL: ${LLM_MODEL}
-    ports:
-      - "8080:8080"
     depends_on:
       postgres:
         condition: service_healthy

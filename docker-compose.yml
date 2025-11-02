@@ -1,0 +1,38 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg18
+    container_name: snorlaxify-postgres
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: source
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U admin" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: snorlaxify-api
+    environment:
+      DB_SOURCE_URL: postgresql://admin:admin@postgres:5432/source
+      VECTORIZER_API_URL: ${VECTORIZER_API_URL}
+      VECTORIZER_MODEL: ${VECTORIZER_MODEL}
+      LLM_API_URL: ${LLM_API_URL}
+      LLM_MODEL: ${LLM_MODEL}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

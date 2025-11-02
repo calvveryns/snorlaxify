@@ -59,6 +59,7 @@ def pipeline():
                 pbar.update(1)
 
         logger.info("Pipeline completed successfully")
+        return recommendations
 
     except Exception as e:
         logger.error(f"Pipeline error: {e}")

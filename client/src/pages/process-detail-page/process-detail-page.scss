@@ -1,0 +1,238 @@
+:host {
+  display: block;
+  padding: 40px 80px;
+  background-color: #f5f5f5;
+  min-height: 100vh;
+}
+
+.process-detail-container {
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.breadcrumbs {
+  margin-bottom: 24px;
+  font-size: 14px;
+  color: #666;
+
+  .breadcrumb-link {
+    color: #007bff;
+    text-decoration: none;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+
+  .breadcrumb-separator {
+    margin: 0 8px;
+    color: #999;
+  }
+
+  .breadcrumb-current {
+    color: #333;
+    font-weight: 500;
+  }
+}
+
+.content-wrapper {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.left-panel,
+.right-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.section {
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  border: 1px solid #e0e0e0;
+
+  &.actions {
+    display: flex;
+    gap: 12px;
+    padding: 20px;
+  }
+}
+
+.section-title {
+  margin: 0 0 16px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+}
+
+.steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.step-item {
+  padding: 16px;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  background: #fafafa;
+
+  &.completed {
+    border-color: #4caf50;
+    background: #f1f8f4;
+  }
+
+  &.in-progress {
+    border-color: #2196f3;
+    background: #e3f2fd;
+  }
+
+  &.waiting {
+    border-color: #e0e0e0;
+    background: #fafafa;
+  }
+}
+
+.step-header {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.step-number {
+  font-weight: 600;
+  color: #333;
+}
+
+.step-name {
+  color: #666;
+}
+
+.step-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.status-text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+
+  &.completed {
+    color: #4caf50;
+  }
+
+  &.in-progress {
+    color: #2196f3;
+  }
+
+  &.waiting {
+    color: #999;
+  }
+
+  &.failed {
+    color: #f44336;
+  }
+
+  i {
+    font-size: 14px;
+  }
+}
+
+.step-progress {
+  padding: 4px 12px;
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #333;
+}
+
+.statistics-card,
+.log-card {
+  height: 100%;
+
+  ::ng-deep .p-card-body {
+    padding: 0;
+  }
+
+  ::ng-deep .p-card-content {
+    padding: 20px;
+  }
+}
+
+.card-header {
+  padding: 16px 20px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.statistics-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.stat-item {
+  font-size: 14px;
+  color: #666;
+  line-height: 1.6;
+
+  strong {
+    color: #333;
+    font-weight: 600;
+  }
+}
+
+.log-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 600px;
+  overflow-y: auto;
+}
+
+.log-entry {
+  display: flex;
+  gap: 12px;
+  font-size: 13px;
+  padding: 8px 0;
+  border-bottom: 1px solid #f0f0f0;
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.log-time {
+  color: #999;
+  font-weight: 500;
+  min-width: 70px;
+}
+
+.log-message {
+  color: #333;
+  flex: 1;
+}
+
+::ng-deep .p-progressbar {
+  height: 24px;
+  border-radius: 4px;
+}
+
+::ng-deep .p-progressbar-value {
+  background: #2196f3;
+}
+
+::ng-deep .p-button {
+  flex: 1;
+}
+

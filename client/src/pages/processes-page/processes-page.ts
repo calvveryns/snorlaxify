@@ -3,6 +3,7 @@ import { TableModule } from 'primeng/table';
 import { TagModule } from 'primeng/tag';
 import { CommonModule, DatePipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { Router } from '@angular/router';
 
 const statuses = ['new', 'running', 'completed', 'failed'] as const;
 
@@ -14,6 +15,8 @@ const statuses = ['new', 'running', 'completed', 'failed'] as const;
   styleUrl: './processes-page.scss',
 })
 export class ProcessesPage {
+  constructor(private router: Router) {}
+
   protected readonly statuses = statuses;
   protected readonly actionOptions = [
     { label: 'Open', value: 'open' },
@@ -66,5 +69,11 @@ export class ProcessesPage {
       default:
         return 'warn';
     }
+  }
+
+  protected onRowClick(row: { date: string; databaseName: string }) {
+    // Use databaseName as ID for navigation
+    const processId = encodeURIComponent(row.databaseName);
+    this.router.navigate(['/processes', processId]);
   }
 }

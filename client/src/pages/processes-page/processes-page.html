@@ -1,3 +1,8 @@
+<div class="toolbar">
+  <button pButton type="button" label="Создать процесс" icon="pi pi-plus" (click)="openCreateDialog()"></button>
+  <span class="spacer"></span>
+</div>
+
 <p-table [value]="rows()" dataKey="date" [tableStyle]="{ 'min-width': '60rem' }">
   <ng-template pTemplate="header">
     <tr>
@@ -6,6 +11,7 @@
       <th>Найдено групп дубликатов</th>
       <th>Время обработки</th>
       <th>Статус</th>
+      <th>Действия</th>
     </tr>
   </ng-template>
 
@@ -18,6 +24,30 @@
       <td>
         <p-tag [value]="row.status" [severity]="getSeverity(row.status)"></p-tag>
       </td>
+      <td (click)="$event.stopPropagation()">
+        <button
+          pButton
+          type="button"
+          icon="pi pi-pencil"
+          class="p-button-text p-button-sm"
+          (click)="openEditDialog(row, $event)"
+          pTooltip="Редактировать"
+          tooltipPosition="top"
+        ></button>
+        <button
+          pButton
+          type="button"
+          icon="pi pi-trash"
+          class="p-button-text p-button-sm p-button-danger"
+          (click)="deleteProcess(row, $event)"
+          pTooltip="Удалить"
+          tooltipPosition="top"
+        ></button>
+      </td>
     </tr>
   </ng-template>
 </p-table>
+
+<app-create-process-dialog (save)="onSaveProcess($event)"></app-create-process-dialog>
+
+<p-confirmDialog></p-confirmDialog>

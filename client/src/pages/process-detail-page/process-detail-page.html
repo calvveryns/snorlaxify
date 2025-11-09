@@ -86,6 +86,15 @@
           [outlined]="true"
         ></p-button>
       </div>
+
+      <div class="section results-section" *ngIf="true || isAllStepsCompleted()">
+        <p-button
+          label="Посмотреть результаты"
+          icon="pi pi-eye"
+          (onClick)="onViewResults()"
+          styleClass="p-button-success"
+        ></p-button>
+      </div>
     </div>
 
     <div class="right-panel">

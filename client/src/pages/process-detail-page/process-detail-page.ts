@@ -146,5 +146,20 @@ export class ProcessDetailPage {
     console.log('Restart step clicked');
     // TODO: Implement restart step logic
   }
+
+  protected isAllStepsCompleted(): boolean {
+    //пока что пусть отображается всегда
+    return true;
+    // const process = this.process();
+    // if (!process) return false;
+    // return process.steps.every((step) => step.status === 'completed');
+  }
+
+  protected onViewResults() {
+    const process = this.process();
+    if (!process) return;
+    const processId = encodeURIComponent(process.id);
+    this.router.navigate(['/processes', processId, 'duplicates']);
+  }
 }
 

@@ -34,5 +34,14 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: snorlaxify-client
+    ports:
+      - "80:80"
+    restart: unless-stopped
+
 volumes:
   postgres_data:

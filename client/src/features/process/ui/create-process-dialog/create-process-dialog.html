@@ -1,0 +1,216 @@
+<p-drawer
+  [(visible)]="visible"
+  (onHide)="closeDialog()"
+  position="right"
+  [style]="{ width: '600px' }"
+  [modal]="true"
+>
+  <ng-template pTemplate="header">
+    <h2 class="sidebar-header">{{ isEditMode ? 'Редактирование процесса' : 'Создание процесса' }}</h2>
+  </ng-template>
+
+  <div class="sidebar-body">
+    <!-- Расписание проверок -->
+    <div class="form-section">
+      <h3 class="section-title">Расписание проверок</h3>
+
+      <div class="form-group">
+        <label class="form-label">Режим:</label>
+        <div class="radio-group">
+          <div class="radio-item">
+            <p-radioButton
+              name="scheduleMode"
+              value="daily"
+              [(ngModel)]="scheduleMode"
+              inputId="mode-daily"
+            ></p-radioButton>
+            <label for="mode-daily" class="radio-label">Ежедневно</label>
+          </div>
+          <div class="radio-item">
+            <p-radioButton
+              name="scheduleMode"
+              value="weekdays"
+              [(ngModel)]="scheduleMode"
+              inputId="mode-weekdays"
+            ></p-radioButton>
+            <label for="mode-weekdays" class="radio-label">По дням недели</label>
+          </div>
+          <div class="radio-item">
+            <p-radioButton
+              name="scheduleMode"
+              value="interval"
+              [(ngModel)]="scheduleMode"
+              inputId="mode-interval"
+            ></p-radioButton>
+            <label for="mode-interval" class="radio-label">Интервал</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-group" *ngIf="scheduleMode === 'daily' || scheduleMode === 'weekdays'">
+        <label for="startTime" class="form-label">Время запуска:</label>
+        <input id="startTime" type="text" pInputText [(ngModel)]="startTime" placeholder="12:00" />
+      </div>
+
+      <div class="form-group" *ngIf="scheduleMode === 'weekdays'">
+        <label for="weekdays" class="form-label">Дни недели:</label>
+        <p-select
+          id="weekdays"
+          [options]="weekdayOptions"
+          [(ngModel)]="selectedWeekdays"
+          placeholder="Выберите"
+          [filter]="true"
+        ></p-select>
+      </div>
+
+      <div class="form-group">
+        <label for="timeZone" class="form-label">Временная зона:</label>
+        <p-select
+          id="timeZone"
+          [options]="timeZoneOptions"
+          [(ngModel)]="timeZone"
+          optionLabel="label"
+          optionValue="value"
+        ></p-select>
+      </div>
+
+      <div class="form-group" *ngIf="scheduleMode === 'interval'">
+        <label for="interval" class="form-label">Интервал:</label>
+        <input id="interval" type="text" pInputText [(ngModel)]="interval" placeholder="4 часа(ов)" />
+      </div>
+    </div>
+
+    <!-- Параметры автоматической проверки -->
+    <div class="form-section">
+      <h3 class="section-title">Параметры автоматической проверки</h3>
+
+      <div class="form-group">
+        <label class="form-label">Обрабатывать новые записи:</label>
+        <div class="radio-group">
+          <div class="radio-item">
+            <p-radioButton
+              name="processNewRecords"
+              value="yes"
+              [(ngModel)]="processNewRecords"
+              inputId="new-yes"
+            ></p-radioButton>
+            <label for="new-yes" class="radio-label">Да</label>
+          </div>
+          <div class="radio-item">
+            <p-radioButton
+              name="processNewRecords"
+              value="no"
+              [(ngModel)]="processNewRecords"
+              inputId="new-no"
+            ></p-radioButton>
+            <label for="new-no" class="radio-label">Нет</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Перепроверять существующие:</label>
+        <div class="radio-group">
+          <div class="radio-item">
+            <p-radioButton
+              name="recheckExisting"
+              value="only-changed"
+              [(ngModel)]="recheckExisting"
+              inputId="recheck-changed"
+            ></p-radioButton>
+            <label for="recheck-changed" class="radio-label">Только измененные</label>
+          </div>
+          <div class="radio-item">
+            <p-radioButton
+              name="recheckExisting"
+              value="no"
+              [(ngModel)]="recheckExisting"
+              inputId="recheck-no"
+            ></p-radioButton>
+            <label for="recheck-no" class="radio-label">Нет</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="recordLimit" class="form-label">Лимит записей за запуск:</label>
+        <input id="recordLimit" type="text" pInputText [(ngModel)]="recordLimit" placeholder="10 000" />
+      </div>
+
+      <div class="form-group">
+        <div class="checkbox-group">
+          <p-checkbox [(ngModel)]="autoMerge" inputId="autoMerge" [binary]="true"></p-checkbox>
+          <label for="autoMerge" class="checkbox-label">
+            Автообъединение (порог уверенности: {{ autoMergeThreshold }})
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- Уведомления -->
+    <div class="form-section">
+      <h3 class="section-title">Уведомления</h3>
+
+      <div class="form-group">
+        <label for="email" class="form-label">Email:</label>
+        <input id="email" type="email" pInputText [(ngModel)]="email" placeholder="admin@company.com" />
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Уведомления:</label>
+        <div class="radio-group">
+          <div class="radio-item">
+            <p-radioButton
+              name="notifications"
+              value="errors-only"
+              [(ngModel)]="notifications"
+              inputId="notif-errors"
+            ></p-radioButton>
+            <label for="notif-errors" class="radio-label">Только при ошибках</label>
+          </div>
+          <div class="radio-item">
+            <p-radioButton
+              name="notifications"
+              value="always"
+              [(ngModel)]="notifications"
+              inputId="notif-always"
+            ></p-radioButton>
+            <label for="notif-always" class="radio-label">Всегда</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Детальный отчет:</label>
+        <div class="radio-group">
+          <div class="radio-item">
+            <p-radioButton
+              name="detailedReport"
+              value="yes"
+              [(ngModel)]="detailedReport"
+              inputId="report-yes"
+            ></p-radioButton>
+            <label for="report-yes" class="radio-label">Да</label>
+          </div>
+          <div class="radio-item">
+            <p-radioButton
+              name="detailedReport"
+              value="no"
+              [(ngModel)]="detailedReport"
+              inputId="report-no"
+            ></p-radioButton>
+            <label for="report-no" class="radio-label">Нет</label>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <ng-template pTemplate="footer">
+    <div class="sidebar-footer">
+      <button pButton type="button" label="Закрыть" (click)="closeDialog()" [text]="true"></button>
+      <button pButton type="button" [label]="isEditMode ? 'Сохранить изменения' : 'Сохранить'" (click)="onSave()"></button>
+    </div>
+  </ng-template>
+</p-drawer>
+

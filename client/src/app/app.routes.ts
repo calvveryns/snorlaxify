@@ -17,6 +17,14 @@ export const routes: Routes = [
             {
                 path: 'processes',
                 loadComponent: () => import('../pages/processes-page/processes-page').then(m => m.ProcessesPage),
+            },
+            {
+                path: 'processes/:id',
+                loadComponent: () => import('../pages/process-detail-page/process-detail-page').then(m => m.ProcessDetailPage),
+            },
+            {
+                path: 'processes/:id/duplicates',
+                loadComponent: () => import('../pages/duplicates-correction-page/duplicates-correction-page').then(m => m.DuplicatesCorrectionPage),
             }
         ]
     },

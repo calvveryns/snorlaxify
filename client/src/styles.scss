@@ -1,0 +1,19 @@
+/* You can add global styles to this file, and also import other style files */
+html {
+  font-family: Arial;
+}
+
+body {
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+}
+
+$space-step: 4px;
+$space-max: 20;
+
+:root {
+  @for $i from 1 through $space-max {
+    --gap-#{$i}m: #{$i * $space-step};
+  }
+}

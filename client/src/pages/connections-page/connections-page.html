@@ -1,0 +1,50 @@
+<div class="toolbar">
+  <button pButton type="button" label="Создать подключение" icon="pi pi-plus" (click)="openCreateDialog()"></button>
+  <span class="spacer"></span>
+</div>
+
+<p-table [value]="rows()" [tableStyle]="{ 'min-width': '40rem' }">
+  <ng-template pTemplate="header">
+    <tr>
+      <th>Название</th>
+      <th>Хост</th>
+      <th>Порт</th>
+    </tr>
+  </ng-template>
+
+  <ng-template pTemplate="body" let-row>
+    <tr>
+      <td>{{ row.databaseName }}</td>
+      <td>{{ row.host }}</td>
+      <td>{{ row.port }}</td>
+    </tr>
+  </ng-template>
+</p-table>
+
+<p-dialog
+  header="Создание подключения"
+  [modal]="true"
+  [draggable]="false"
+  [resizable]="false"
+  [dismissableMask]="true"
+  [(visible)]="showCreateDialog"
+  (onHide)="closeCreateDialog()"
+>
+  <div class="dialog-body">
+    <label for="connName">Название</label>
+    <input id="connName" type="text" pInputText [(ngModel)]="connectionName" placeholder="Например: prod-customers" />
+
+    <label for="connStr">Строка подключения</label>
+    <div class="conn-input">
+      <input id="connStr" type="text" pInputText [(ngModel)]="connectionString" placeholder="postgres://user:pass@host:5432/db" />
+      <button pButton type="button" label="Проверить" (click)="checkConnection()"></button>
+    </div>
+  </div>
+
+  <ng-template pTemplate="footer">
+    <button pButton type="button" label="Отмена" (click)="closeCreateDialog()" [text]="true"></button>
+    <button pButton type="button" label="Создать" (click)="createConnection()"></button>
+  </ng-template>
+</p-dialog>
+
+

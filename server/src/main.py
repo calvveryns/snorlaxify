@@ -1,5 +1,6 @@
 import logging
-from processes.pipeline import pipeline
+import uvicorn
+from server.src.api import create
 
 logging.basicConfig(
     level=logging.INFO,
@@ -7,4 +8,5 @@ logging.basicConfig(
 )
 
 if __name__ == "__main__":
-    pipeline()
+    app = create()
+    uvicorn.run(app, host="0.0.0.0", port=8080, log_level="info")

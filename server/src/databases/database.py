@@ -45,16 +45,12 @@ class SourceDatabase(DatabaseManager):
                 WHERE "typeIdentifier" = 'item'
             """)
             rows = cursor.fetchall()
-            logger.info(f"Fetched {len(rows)} identifiers from source DB")
             return [row[0] for row in rows]
 
-
-class TargetDatabase(DatabaseManager):
     def setup_vector_extension(self):
         with self.get_cursor() as (cursor, conn):
             cursor.execute("CREATE EXTENSION IF NOT EXISTS vector;")
             conn.commit()
-            logger.info("Vector extension created/verified")
 
     def create_vector_table(self):
         create_table_sql = """
@@ -67,7 +63,6 @@ class TargetDatabase(DatabaseManager):
         with self.get_cursor() as (cursor, conn):
             cursor.execute(create_table_sql)
             conn.commit()
-            logger.info("Vector table created/verified")
 
     def insert_or_update_vector(self, identifier: str, vector: List[float]):
         insert_sql = """
@@ -88,7 +83,7 @@ class TargetDatabase(DatabaseManager):
                 item_one.vector <=> item_two.vector AS distance
             FROM vector_data item_one
             JOIN vector_data item_two ON item_one.id < item_two.id
-            WHERE item_one.vector <=> item_two.vector <= 0.15
+            WHERE item_one.vector <=> item_two.vector <= 0.35
             ORDER BY distance;
         """
         with self.get_cursor() as (cursor, conn):
@@ -102,4 +97,3 @@ class TargetDatabase(DatabaseManager):
     def commit_all_changes(self):
         with self.get_connection() as conn:
             conn.commit()
-            logger.info("All vectors saved to target DB")

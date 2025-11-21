@@ -1,3 +1,3 @@
-from .database import SourceDatabase, DatabaseManager
+from .database import SourceDatabase
 
-__all__ = ['SourceDatabase', 'DatabaseManager']
+__all__ = ['SourceDatabase']

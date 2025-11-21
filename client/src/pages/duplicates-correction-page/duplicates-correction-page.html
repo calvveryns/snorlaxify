@@ -1,0 +1,135 @@
+<div class="duplicates-correction-container" *ngIf="databaseName()">
+  <div class="breadcrumbs">
+    <a routerLink="/processes" class="breadcrumb-link">Процессы</a>
+    <span class="breadcrumb-separator">/</span>
+    <span class="breadcrumb-current">{{ databaseName() }}</span>
+    <span class="breadcrumb-separator">/</span>
+    <span class="breadcrumb-current">Исправление дубликатов</span>
+  </div>
+
+  <div class="header">
+    <h2>База данных: {{ databaseName() }}</h2>
+  </div>
+
+  <div class="content-wrapper">
+    <div class="left-panel">
+      <div class="section">
+        <h3 class="section-title">Список групп дубликатов</h3>
+        <div class="groups-list">
+          <div class="groups-header">
+            <p-checkbox></p-checkbox>
+            <span class="header-text">Проверено</span>
+          </div>
+          <div
+            *ngFor="let group of duplicateGroups()"
+            class="group-item"
+            [class.selected]="selectedGroup()?.id === group.id"
+            (click)="onGroupSelect(group)"
+          >
+            <p-checkbox
+              [binary]="true"
+              [ngModel]="group.checked"
+              (ngModelChange)="onGroupCheck(group, $event)"
+              (click)="$event.stopPropagation()"
+            ></p-checkbox>
+            <span class="group-name">{{ group.name }}</span>
+          </div>
+        </div>
+        <div class="actions-bottom">
+          <button pButton type="button" label="Сохранить изменения" (click)="onSaveChanges()"></button>
+        </div>
+      </div>
+    </div>
+
+    <div class="right-panel" *ngIf="selectedGroup()">
+      <div class="section">
+        <div class="proposed-name">
+          <span class="label">Предлагаемое название:</span>
+          <span class="value">{{ selectedGroup()!.proposedName }}</span>
+        </div>
+        <div class="duplicates-count">
+          Найдено дубликатов: {{ selectedGroup()!.duplicatesCount }}
+        </div>
+        <div class="action-buttons">
+          <button
+            pButton
+            type="button"
+            icon="pi pi-arrow-left"
+            class="p-button-text p-button-secondary"
+            [disabled]="true"
+            pTooltip="Отменить"
+          ></button>
+          <button
+            pButton
+            type="button"
+            icon="pi pi-arrow-right"
+            class="p-button-text p-button-secondary"
+            [disabled]="true"
+            pTooltip="Повторить"
+          ></button>
+          <button pButton type="button" label="Выбрать" (click)="onSelect()"></button>
+          <button pButton type="button" label="Объединить" (click)="onMerge()"></button>
+          <button pButton type="button" label="Разделить" (click)="onSplit()"></button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h3 class="section-title">Финальная строка:</h3>
+        <p-table [value]="[selectedGroup()!.finalString]" [tableStyle]="{ 'min-width': '50rem' }">
+          <ng-template pTemplate="header">
+            <tr>
+              <th>№</th>
+              <th>Артикул</th>
+              <th>Срок годности</th>
+              <th>Цена</th>
+              <th>Поставщик</th>
+              <th>Категория товара</th>
+            </tr>
+          </ng-template>
+          <ng-template pTemplate="body" let-record>
+            <tr>
+              <td>{{ record.id }}</td>
+              <td>{{ record.article }}</td>
+              <td>{{ record.shelfLife }}</td>
+              <td>{{ record.price }}</td>
+              <td>{{ record.supplier }}</td>
+              <td>{{ record.category }}</td>
+            </tr>
+          </ng-template>
+        </p-table>
+      </div>
+
+      <div class="section">
+        <h3 class="section-title">Строки дубликатов в БД:</h3>
+        <p-table [value]="selectedGroup()!.duplicates" [tableStyle]="{ 'min-width': '50rem' }">
+          <ng-template pTemplate="header">
+            <tr>
+              <th>№</th>
+              <th>Артикул</th>
+              <th>Срок годности</th>
+              <th>Цена</th>
+              <th>Поставщик</th>
+              <th>Категория товара</th>
+            </tr>
+          </ng-template>
+          <ng-template pTemplate="body" let-record>
+            <tr>
+              <td>{{ record.id }}</td>
+              <td>{{ record.article }}</td>
+              <td>{{ record.shelfLife }}</td>
+              <td>{{ record.price }}</td>
+              <td>{{ record.supplier }}</td>
+              <td>{{ record.category }}</td>
+            </tr>
+          </ng-template>
+        </p-table>
+      </div>
+
+      <div class="actions-bottom">
+        <button pButton type="button" label="Отменить" [outlined]="true" (click)="onCancel()"></button>
+        <button pButton type="button" label="Сохранить" (click)="onSave()"></button>
+      </div>
+    </div>
+  </div>
+</div>
+

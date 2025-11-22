@@ -25,7 +25,7 @@ import { CheckboxModule } from 'primeng/checkbox';
   styleUrl: './create-process-dialog.scss',
 })
 export class CreateProcessDialog {
-  @Output() save = new EventEmitter<ProcessFormData>();
+  @Output() create = new EventEmitter<ProcessFormData>();
   @Output() close = new EventEmitter<void>();
 
   protected visible: boolean = false;
@@ -138,7 +138,7 @@ export class CreateProcessDialog {
       notifications: this.notifications,
       detailedReport: this.detailedReport,
     };
-    this.save.emit(formData);
+    this.create.emit(formData);
     this.closeDialog();
   }
 }

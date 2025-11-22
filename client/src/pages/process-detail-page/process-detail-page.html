@@ -2,21 +2,21 @@
   <div class="breadcrumbs">
     <a routerLink="/processes" class="breadcrumb-link">Процессы</a>
     <span class="breadcrumb-separator">/</span>
-    <span class="breadcrumb-current">{{ process()!.databaseName }}</span>
+    <span class="breadcrumb-current">{{ process()?.task_id }}</span>
   </div>
 
   <div class="content-wrapper">
     <div class="left-panel">
       <div class="section">
         <h3 class="section-title">Общий прогресс:</h3>
-        <p-progressBar [value]="process()!.overallProgress" [showValue]="true"></p-progressBar>
+        <p-progressBar [value]="(process()?.current_step || 0) / (process()?.total_steps || 1) * 100" [showValue]="true"></p-progressBar>
       </div>
 
       <div class="section">
         <h3 class="section-title">Шаги процесса:</h3>
         <div class="steps-list">
           <div
-            *ngFor="let step of process()!.steps"
+            *ngFor="let step of steps()"
             class="step-item"
             [class.completed]="step.status === 'completed'"
             [class.in-progress]="step.status === 'in_progress'"
@@ -43,9 +43,9 @@
                 <i class="pi pi-times"></i>
                 Ошибка
               </span>
-              <span *ngIf="step.progress" class="step-progress">
+              <!-- <span *ngIf="step.progress" class="step-progress">
                 {{ step.progress.current }}/{{ step.progress.total }}
-              </span>
+              </span> -->
             </div>
           </div>
         </div>
@@ -60,18 +60,18 @@
             <div class="stat-item">
               Обработано записей:
               <strong>
-                {{ process()!.statistics.recordsProcessed.current }} из
-                {{ process()!.statistics.recordsProcessed.total }} ({{ process()!.statistics.recordsProcessed.percentage }}%)
+                <!-- {{ process()!.statistics.recordsProcessed.current }} из
+                {{ process()!.statistics.recordsProcessed.total }} ({{ process()!.statistics.recordsProcessed.percentage }}%) -->
               </strong>
             </div>
             <div class="stat-item">
-              Найдено кандидатов: <strong>{{ process()!.statistics.candidatesFound }} пар</strong>
+              <!-- Найдено кандидатов: <strong>{{ process()!.statistics.candidatesFound }} пар</strong> -->
             </div>
             <div class="stat-item">
-              Проверено в LLM: <strong>{{ process()!.statistics.checkedInLLM }} пар</strong>
+              <!-- Проверено в LLM: <strong>{{ process()!.statistics.checkedInLLM }} пар</strong> -->
             </div>
             <div class="stat-item">
-              Скорость: <strong>{{ process()!.statistics.speed }} записей/сек</strong>
+              <!-- Скорость: <strong>{{ process()!.statistics.speed }} записей/сек</strong> -->
             </div>
           </div>
         </p-card>
@@ -103,10 +103,10 @@
           <div class="card-header">Лог выполнения:</div>
         </ng-template>
         <div class="log-content">
-          <div *ngFor="let log of process()!.logs" class="log-entry">
+          <!-- <div *ngFor="let log of process()!.logs" class="log-entry">
             <span class="log-time">{{ log.time }}</span>
             <span class="log-message">{{ log.message }}</span>
-          </div>
+          </div> -->
         </div>
       </p-card>
     </div>

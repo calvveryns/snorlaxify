@@ -1,4 +1,4 @@
-import { Component, signal } from '@angular/core';
+import { Component, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router, RouterModule } from '@angular/router';
 import { ProgressBarModule } from 'primeng/progressbar';
@@ -6,29 +6,22 @@ import { ButtonModule } from 'primeng/button';
 import { CardModule } from 'primeng/card';
 import { CheckboxModule } from 'primeng/checkbox';
 import { TagModule } from 'primeng/tag';
+import { BehaviorSubject, debounceTime, EMPTY, interval, map, of, Subject, switchMap, takeUntil, tap, timer } from 'rxjs';
+import { toSignal } from '@angular/core/rxjs-interop';
+import { ProcessService } from '../../shared/process.service';
 
 type StepStatus = 'completed' | 'in_progress' | 'waiting' | 'failed';
+const getStatusFor = (step: number, currentStep: number) => {
+  if (currentStep < step) {
+    return 'waiting';
+  }
 
-interface ProcessStep {
-  id: number;
-  name: string;
-  status: StepStatus;
-  progress?: { current: number; total: number };
-}
+  if (currentStep === step) {
+    return 'in_progress'
+  }
 
-interface ProcessDetail {
-  id: string;
-  databaseName: string;
-  overallProgress: number;
-  steps: ProcessStep[];
-  statistics: {
-    recordsProcessed: { current: number; total: number; percentage: number };
-    candidatesFound: number;
-    checkedInLLM: number;
-    speed: number;
-  };
-  logs: Array<{ time: string; message: string }>;
-}
+  return 'completed';
+};
 
 @Component({
   selector: 'app-process-detail-page',
@@ -44,72 +37,67 @@ interface ProcessDetail {
   ],
   templateUrl: './process-detail-page.html',
   styleUrl: './process-detail-page.scss',
+  providers: [ProcessService]
 })
 export class ProcessDetailPage {
-  protected readonly process = signal<ProcessDetail | null>(null);
+  private route = inject(ActivatedRoute);
+  private router = inject(Router);
+  private processService = inject(ProcessService);
 
-  constructor(
-    private route: ActivatedRoute,
-    private router: Router
-  ) {
-    const processId = this.route.snapshot.paramMap.get('id');
-    if (processId) {
-      this.loadProcessDetail(processId);
-    }
-  }
 
-  private loadProcessDetail(id: string) {
-    // Mock data based on the image description
-    const decodedId = decodeURIComponent(id);
-    const mockProcess: ProcessDetail = {
-      id,
-      databaseName: decodedId || 'БД_КаталогПродуктов',
-      overallProgress: 45,
-      steps: [
-        {
-          id: 1,
-          name: 'Загрузка исходных данных',
-          status: 'completed',
-        },
-        {
-          id: 2,
-          name: 'Векторизация записей',
-          status: 'in_progress',
-          progress: { current: 235, total: 500 },
-        },
-        {
-          id: 3,
-          name: 'Поиск кандидатов-дубликатов',
-          status: 'waiting',
-        },
-        {
-          id: 4,
-          name: 'LLM - верификация пар',
-          status: 'waiting',
-        },
-        {
-          id: 5,
-          name: 'Группировка результатов',
-          status: 'waiting',
-        },
-      ],
-      statistics: {
-        recordsProcessed: { current: 235, total: 500, percentage: 47 },
-        candidatesFound: 89,
-        checkedInLLM: 0,
-        speed: 12,
+  stop$ = new Subject<void>();
+  update$ = timer(0, 2000).pipe(
+    takeUntil(this.stop$),
+  );
+
+  loading = signal(false);
+
+  steps = computed(() => {
+    const currentStep = this.process()?.current_step || 0;
+
+    return [
+      {
+        id: 1,
+        name: 'Настройка исходной базы данных',
+        status: getStatusFor(0, currentStep),
       },
-      logs: [
-        { time: '14:32:05', message: 'Загрузка данных завершена (500 записей)' },
-        { time: '14:32:10', message: 'Векторизация: "вода мин." → успешно' },
-        { time: '14:32:11', message: 'Векторизация: "минеральная вода" → успешно' },
-        { time: '14:32:12', message: 'Ошибка: "сок яблчный" → повтор попытки...' },
-        { time: '14:32:13', message: 'Векторизация: "сок яблочный" → успешно' },
-      ],
-    };
+      {
+        id: 2,
+        name: 'Векторизация идентификаторов',
+        status: getStatusFor(1, currentStep),
+        // progress: { current: 235, total: 500 },
+      },
+      {
+        id: 3,
+        name: 'Внесение изменений',
+        status: getStatusFor(2, currentStep),
+      },
+      {
+        id: 4,
+        name: 'Поиск близких пар',
+        status: getStatusFor(3, currentStep),
+      },
+      {
+        id: 5,
+        name: 'Запрос рекомендаций',
+        status: getStatusFor(4, currentStep),
+      }
+    ];
+  })
 
-    this.process.set(mockProcess);
-  }
+  protected readonly process = toSignal(
+    this.update$.pipe(
+      tap(() => this.loading.set(true)),
+      debounceTime(300),
+      switchMap(() => this.processService.getProcess(this.route.snapshot.paramMap.get('id')!)),
+      tap(() => this.loading.set(false)),
+      tap(process => {
+        if (process.total_steps === process.current_step) {
+          this.stop$.next();
+        }
+      })
+    ),
+  )
 
   protected getStepStatusIcon(status: StepStatus): string {
     switch (status) {
@@ -158,7 +146,7 @@ export class ProcessDetailPage {
   protected onViewResults() {
     const process = this.process();
     if (!process) return;
-    const processId = encodeURIComponent(process.id);
+    const processId = encodeURIComponent(process.task_id!);
     this.router.navigate(['/processes', processId, 'duplicates']);
   }
 }

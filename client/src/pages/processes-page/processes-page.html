@@ -1,9 +1,14 @@
 <div class="toolbar">
   <button pButton type="button" label="Создать процесс" icon="pi pi-plus" (click)="openCreateDialog()"></button>
+    <p-button
+    icon="pi pi-refresh"
+    [outlined]="true"
+    (onClick)="update$.next()"
+  />
   <span class="spacer"></span>
 </div>
 
-<p-table [value]="rows()" dataKey="date" [tableStyle]="{ 'min-width': '60rem' }">
+<p-table [value]="rows()?.tasks || []" dataKey="date" [tableStyle]="{ 'min-width': '60rem' }" [loading]="loading()">
   <ng-template pTemplate="header">
     <tr>
       <th>Дата</th>
@@ -16,10 +21,10 @@
   </ng-template>
 
   <ng-template pTemplate="body" let-row>
-    <tr (click)="onRowClick(row)">
-      <td>{{ row.date | date: 'dd.MM.yyyy HH:mm' }}</td>
-      <td>{{ row.databaseName }}</td>
-      <td>{{ row.duplicatesFound }}</td>
+    <tr (click)="onRowClick(row.uuid)">
+      <td>{{ row.started_at | date: 'dd.MM.yyyy HH:mm' }}</td>
+      <td>{{ row.uuid }}</td>
+      <td>{{ row?.recommendations?.results?.length }}</td>
       <td>{{ row.processingTime }}</td>
       <td>
         <p-tag [value]="row.status" [severity]="getSeverity(row.status)"></p-tag>
@@ -39,7 +44,7 @@
           type="button"
           icon="pi pi-trash"
           class="p-button-text p-button-sm p-button-danger"
-          (click)="deleteProcess(row, $event)"
+          (click)="deleteProcess(row.uuid, $event)"
           pTooltip="Удалить"
           tooltipPosition="top"
         ></button>
@@ -48,6 +53,6 @@
   </ng-template>
 </p-table>
 
-<app-create-process-dialog (save)="onSaveProcess($event)"></app-create-process-dialog>
+<app-create-process-dialog (create)="onSaveProcess($event)"></app-create-process-dialog>
 
 <p-confirmDialog></p-confirmDialog>

@@ -1,17 +1,33 @@
 import logging
 import uuid
-from datetime import datetime
+import threading
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
-from server.src.processes.pipeline import pipeline
+from server.src.config import settings
+from server.src.databases import SourceDatabase
+from server.src.processes.pipeline import pipeline, get_pipeline_controller, remove_pipeline_controller
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-pipeline_tasks: Dict[str, Dict] = {}
+_pipeline_threads: Dict[str, threading.Thread] = {}
+_threads_lock = threading.Lock()
+_tables_initialized = False
+_tables_lock = threading.Lock()
+
+
+def get_source_db() -> SourceDatabase:
+    global _tables_initialized
+    source_db = SourceDatabase(settings.db_source_url)
+    if not _tables_initialized:
+        with _tables_lock:
+            if not _tables_initialized:
+                source_db.create_pipeline_tables()
+                _tables_initialized = True
+    return source_db
 
 
 class PipelineResponse(BaseModel):
@@ -28,81 +44,179 @@ class PipelineStatus(BaseModel):
 class TaskStatus(BaseModel):
     task_id: str
     status: str
-    started_at: str
+    started_at: Optional[str]
     completed_at: Optional[str]
-    recommendations: Optional[str]
+    paused_at: Optional[str]
+    recommendations: Optional[Any]
+    current_step: Optional[int]
+    total_steps: Optional[int]
+    error: Optional[str]
 
 
-def run_pipeline_task(task_id: str):
+def run_pipeline_task(task_id: str, start_from_step: int = 0):
+    source_db = SourceDatabase(settings.db_source_url)
     try:
-        pipeline_tasks[task_id]["status"] = "running"
-        logger.info(f"Starting pipeline execution for task {task_id}")
-        recommendations = pipeline()
-        pipeline_tasks[task_id]["status"] = "completed"
-        pipeline_tasks[task_id]["recommendations"] = recommendations
-        pipeline_tasks[task_id]["completed_at"] = datetime.now().isoformat()
+        logger.info(f"Starting pipeline execution for task {task_id} from step {start_from_step}")
+        recommendations = pipeline(task_id, source_db, start_from_step)
         logger.info(f"Pipeline execution completed for task {task_id}")
+        return recommendations
     except Exception as e:
         logger.error(f"Pipeline execution failed for task {task_id}: {e}")
-        pipeline_tasks[task_id]["status"] = "failed"
-        pipeline_tasks[task_id]["error"] = str(e)
-        pipeline_tasks[task_id]["completed_at"] = datetime.now().isoformat()
+    finally:
+        with _threads_lock:
+            _pipeline_threads.pop(task_id, None)
+        remove_pipeline_controller(task_id)
 
 
 @router.post("/pipeline/start", response_model=PipelineResponse)
-async def run_pipeline(background_tasks: BackgroundTasks):
+async def run_pipeline(source_db: SourceDatabase = Depends(get_source_db)):
     task_id = str(uuid.uuid4())
-    pipeline_tasks[task_id] = {
-        "status": "pending",
-        "started_at": datetime.now().isoformat(),
-        "completed_at": None,
-        "error": None,
-        "recommendations": None
-    }
+    source_db.create_pipeline_task(task_id, total_steps=5)
 
-    background_tasks.add_task(run_pipeline_task, task_id)
+    thread = threading.Thread(target=run_pipeline_task, args=(task_id, 0), daemon=True)
+    thread.start()
+
+    with _threads_lock:
+        _pipeline_threads[task_id] = thread
 
     return PipelineResponse(
         status="started",
-        message=f"Pipeline execution started in background",
+        message="Pipeline execution started in background",
         task_id=task_id
     )
 
 
 @router.get("/pipeline/status", response_model=PipelineStatus)
-async def get_pipeline_status():
-    count = sum(1 for task in pipeline_tasks.values() if task["status"] == "running")
+async def get_pipeline_status(source_db: SourceDatabase = Depends(get_source_db)):
+    all_tasks = source_db.get_all_pipeline_tasks()
+    running_count = sum(1 for task in all_tasks if task["status"] == "running")
 
-    tasks = [
-        {
-            "uuid": task_id,
-            "status": task_info["status"],
-            "started_at": task_info["started_at"],
-            "completed_at": task_info.get("completed_at"),
-            "recommendations": task_info.get("recommendations")
-        }
-        for task_id, task_info in pipeline_tasks.items()
-    ]
+    tasks = []
+    for task in all_tasks:
+        recommendations = source_db.get_pipeline_final_result(task["task_id"])
+        tasks.append({
+            "uuid": task["task_id"],
+            "status": task["status"],
+            "started_at": task["started_at"],
+            "completed_at": task["completed_at"],
+            "paused_at": task["paused_at"],
+            "recommendations": recommendations,
+            "current_step": task["current_step"],
+            "total_steps": task["total_steps"]
+        })
 
     return PipelineStatus(
-        count=count,
+        count=running_count,
         tasks=tasks
     )
 
 
 @router.get("/pipeline/{task_id}/status", response_model=TaskStatus)
-async def get_task_status(task_id: str):
-    if task_id not in pipeline_tasks:
+async def get_task_status(task_id: str, source_db: SourceDatabase = Depends(get_source_db)):
+    task = source_db.get_pipeline_task(task_id)
+    if not task:
         raise HTTPException(
             status_code=404,
             detail=f"Task {task_id} not found"
         )
 
-    task_info = pipeline_tasks[task_id]
+    recommendations = source_db.get_pipeline_final_result(task_id)
+
     return TaskStatus(
         task_id=task_id,
-        status=task_info["status"],
-        started_at=task_info["started_at"],
-        completed_at=task_info.get("completed_at"),
-        recommendations=task_info.get("recommendations")
+        status=task["status"],
+        started_at=task["started_at"],
+        completed_at=task["completed_at"],
+        paused_at=task["paused_at"],
+        recommendations=recommendations,
+        current_step=task["current_step"],
+        total_steps=task["total_steps"],
+        error=task["error"]
+    )
+
+
+@router.post("/pipeline/{task_id}/pause", response_model=PipelineResponse)
+async def pause_pipeline(task_id: str, source_db: SourceDatabase = Depends(get_source_db)):
+    task = source_db.get_pipeline_task(task_id)
+    if not task:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Task {task_id} not found"
+        )
+
+    if task["status"] != "running":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Task {task_id} is not running. Current status: {task['status']}"
+        )
+
+    controller = get_pipeline_controller(task_id)
+    controller.pause()
+
+    source_db.pause_pipeline_task(task_id)
+
+    return PipelineResponse(
+        status="paused",
+        message=f"Pipeline task {task_id} has been paused",
+        task_id=task_id
+    )
+
+
+@router.post("/pipeline/{task_id}/resume", response_model=PipelineResponse)
+async def resume_pipeline(task_id: str, source_db: SourceDatabase = Depends(get_source_db)):
+    task = source_db.get_pipeline_task(task_id)
+    if not task:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Task {task_id} not found"
+        )
+
+    if task["status"] != "paused":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Task {task_id} is not paused. Current status: {task['status']}"
+        )
+
+    controller = get_pipeline_controller(task_id)
+    controller.resume()
+
+    with _threads_lock:
+        thread = _pipeline_threads.get(task_id)
+        if not thread or not thread.is_alive():
+            current_step = task.get("current_step", 0)
+            resume_from_step = max(0, current_step + 1) if current_step is not None else 0
+            thread = threading.Thread(
+                target=run_pipeline_task,
+                args=(task_id, resume_from_step),
+                daemon=True
+            )
+            thread.start()
+            _pipeline_threads[task_id] = thread
+
+    source_db.resume_pipeline_task(task_id)
+
+    return PipelineResponse(
+        status="resumed",
+        message=f"Pipeline task {task_id} has been resumed",
+        task_id=task_id
+    )
+
+
+@router.delete("/pipeline/{task_id}", response_model=PipelineResponse)
+async def delete_pipeline(task_id: str, source_db: SourceDatabase = Depends(get_source_db)):
+    with _threads_lock:
+        thread = _pipeline_threads.pop(task_id, None)
+        if thread and thread.is_alive():
+            controller = get_pipeline_controller(task_id)
+            controller.pause()
+            thread.join(timeout=5)
+
+    remove_pipeline_controller(task_id)
+
+    source_db.delete_pipeline_task(task_id)
+
+    return PipelineResponse(
+        status="deleted",
+        message=f"Pipeline task {task_id} and its results have been deleted",
+        task_id=task_id
     )

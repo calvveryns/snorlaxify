@@ -3,28 +3,26 @@ services:
     image: pgvector/pgvector:pg18
     container_name: snorlaxify-postgres
     environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: admin
-      POSTGRES_DB: source
+      POSTGRES_PASSWORD: postgres
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+      - postgres_data:/var/lib/postgresql
+      - ./openpim.sql:/docker-entrypoint-initdb.d/openpim.sql
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U admin -d source" ]
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d openpim" ]
       interval: 5s
       timeout: 5s
       retries: 5
 
-  api:
+  server:
     build:
       context: .
-      dockerfile: Dockerfile
-    container_name: snorlaxify-api
+      dockerfile: Dockerfile.server
+    container_name: snorlaxify-server
     network_mode: host
     environment:
-      DB_SOURCE_URL: postgresql://admin:admin@localhost:5432/source
+      DB_SOURCE_URL: postgresql://postgres:postgres@localhost:5432/openpim
       VECTORIZER_API_URL: ${VECTORIZER_API_URL}
       VECTORIZER_MODEL: ${VECTORIZER_MODEL}
       LLM_API_URL: ${LLM_API_URL}
@@ -36,8 +34,8 @@ services:
 
   client:
     build:
-      context: ./client
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: Dockerfile.client
     container_name: snorlaxify-client
     ports:
       - "80:80"

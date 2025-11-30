@@ -307,9 +307,21 @@ class SourceDatabase(DatabaseManager):
 
         with self.get_cursor() as (cursor, conn):
             for pair in pairs_to_resolve:
+                title_one = pair.get("title_one")
                 title_two = pair.get("title_two")
-                if not title_two:
+                suggest_name = pair.get("suggest_name")
+
+                if not title_one or not title_two:
                     continue
+
+                if suggest_name:
+                    update_name_sql = """
+                        UPDATE items
+                        SET name = jsonb_set(name, '{en}', to_jsonb(%s::text))
+                        WHERE (name::json->>'en') = %s
+                        AND "deletedAt" IS NULL
+                    """
+                    cursor.execute(update_name_sql, (suggest_name, title_one))
 
                 delete_sql = """
                     UPDATE items
@@ -318,14 +330,14 @@ class SourceDatabase(DatabaseManager):
                     AND "typeId" = 7
                     AND "deletedAt" IS NULL
                 """
-                cursor.execute(delete_sql, (title_two,))
+                cursor.execute(delete_sql, title_two)
 
                 if cursor.rowcount > 0:
                     vector_delete_sql = """
                         DELETE FROM vector_data
                         WHERE identifier = %s
                     """
-                    cursor.execute(vector_delete_sql, (title_two,))
+                    cursor.execute(vector_delete_sql, title_two)
                     processed_count += 1
 
             conn.commit()

@@ -51,11 +51,11 @@ class SourceDatabase(DatabaseManager):
     def get_identifiers(self) -> List[str]:
         with self.get_cursor() as (cursor, conn):
             cursor.execute("""
-                           SELECT (name::json->>'en') AS name
-                           FROM items
-                           WHERE "typeId" = 7
-                             AND "deletedAt" IS NULL
-                           """)
+                SELECT (name::json->>'en') AS name
+                FROM items
+                WHERE "typeId" = 7
+                AND "deletedAt" IS NULL
+            """)
             rows = cursor.fetchall()
             return [row[0] for row in rows]
 
@@ -66,11 +66,11 @@ class SourceDatabase(DatabaseManager):
 
     def create_vector_table(self):
         create_table_sql = """
-        CREATE TABLE IF NOT EXISTS vector_data (
-            id SERIAL PRIMARY KEY,
-            identifier TEXT UNIQUE NOT NULL,
-            vector vector(768) NOT NULL
-        )
+            CREATE TABLE IF NOT EXISTS vector_data (
+                id SERIAL PRIMARY KEY,
+                identifier TEXT UNIQUE NOT NULL,
+                vector vector(768) NOT NULL
+            )
         """
         with self.get_cursor() as (cursor, conn):
             cursor.execute(create_table_sql)
@@ -108,34 +108,34 @@ class SourceDatabase(DatabaseManager):
 
     def create_pipeline_tables(self):
         create_tasks_table = """
-        CREATE TABLE IF NOT EXISTS pipeline_tasks (
-            id SERIAL PRIMARY KEY,
-            task_id UUID UNIQUE NOT NULL,
-            status VARCHAR(20) NOT NULL DEFAULT 'pending',
-            started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            completed_at TIMESTAMP,
-            paused_at TIMESTAMP,
-            error TEXT,
-            current_step INTEGER DEFAULT 0,
-            total_steps INTEGER DEFAULT 5,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
+            CREATE TABLE IF NOT EXISTS pipeline_tasks (
+                id SERIAL PRIMARY KEY,
+                task_id UUID UNIQUE NOT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMP,
+                paused_at TIMESTAMP,
+                error TEXT,
+                current_step INTEGER DEFAULT 0,
+                total_steps INTEGER DEFAULT 5,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
         """
 
         create_results_table = """
-        CREATE TABLE IF NOT EXISTS pipeline_results (
-            task_id UUID PRIMARY KEY REFERENCES pipeline_tasks(task_id) ON DELETE CASCADE,
-            recommendations JSONB,
-            error TEXT,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
+            CREATE TABLE IF NOT EXISTS pipeline_results (
+                task_id UUID PRIMARY KEY REFERENCES pipeline_tasks(task_id) ON DELETE CASCADE,
+                recommendations JSONB,
+                error TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
         """
 
         create_indexes = """
-        CREATE INDEX IF NOT EXISTS idx_pipeline_tasks_status ON pipeline_tasks(status);
-        CREATE INDEX IF NOT EXISTS idx_pipeline_tasks_task_id ON pipeline_tasks(task_id);
+            CREATE INDEX IF NOT EXISTS idx_pipeline_tasks_status ON pipeline_tasks(status);
+            CREATE INDEX IF NOT EXISTS idx_pipeline_tasks_task_id ON pipeline_tasks(task_id);
         """
 
         with self.get_cursor() as (cursor, conn):

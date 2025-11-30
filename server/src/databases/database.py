@@ -93,9 +93,10 @@ class SourceDatabase(DatabaseManager):
                 item_one.identifier AS title_one,
                 item_two.identifier AS title_two,
                 item_one.vector <=> item_two.vector AS distance
-            FROM vector_data item_one
-            JOIN vector_data item_two ON item_one.id < item_two.id
-            WHERE item_one.vector <=> item_two.vector <= 0.15
+            FROM vector_data AS item_one
+            JOIN vector_data AS item_two
+                ON item_one.id < item_two.id
+            WHERE (item_one.vector <=> item_two.vector) <= 0.15
             ORDER BY distance;
         """
         with self.get_cursor() as (cursor, conn):
@@ -186,11 +187,11 @@ class SourceDatabase(DatabaseManager):
             }
 
     def update_pipeline_task_status(
-            self,
-            task_id: str,
-            status: str,
-            current_step: Optional[int] = None,
-            error: Optional[str] = None
+        self,
+        task_id: str,
+        status: str,
+        current_step: Optional[int] = None,
+        error: Optional[str] = None,
     ):
         update_sql = """
             UPDATE pipeline_tasks
@@ -297,3 +298,36 @@ class SourceDatabase(DatabaseManager):
         except Exception as e:
             logger.error(f"Error getting pipeline result for task {task_id}: {e}")
             return None
+
+    def resolve_pipeline_result(self, pairs_to_resolve: List[Dict[str, Any]]) -> int:
+        if not pairs_to_resolve:
+            return 0
+
+        processed_count = 0
+
+        with self.get_cursor() as (cursor, conn):
+            for pair in pairs_to_resolve:
+                title_two = pair.get("title_two")
+                if not title_two:
+                    continue
+
+                delete_sql = """
+                    UPDATE items
+                    SET "deletedAt" = CURRENT_TIMESTAMP
+                    WHERE (name::json->>'en') = %s
+                    AND "typeId" = 7
+                    AND "deletedAt" IS NULL
+                """
+                cursor.execute(delete_sql, (title_two,))
+
+                if cursor.rowcount > 0:
+                    vector_delete_sql = """
+                        DELETE FROM vector_data
+                        WHERE identifier = %s
+                    """
+                    cursor.execute(vector_delete_sql, (title_two,))
+                    processed_count += 1
+
+            conn.commit()
+
+        return processed_count

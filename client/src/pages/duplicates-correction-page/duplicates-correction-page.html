@@ -1,19 +1,15 @@
-<div class="duplicates-correction-container" *ngIf="databaseName()">
+<div class="duplicates-correction-container">
   <div class="breadcrumbs">
     <a routerLink="/processes" class="breadcrumb-link">Процессы</a>
     <span class="breadcrumb-separator">/</span>
-    <span class="breadcrumb-current">{{ databaseName() }}</span>
+    <a routerLink="/processes/{{uuid}}" class="breadcrumb-link">{{ uuid }}</a>
     <span class="breadcrumb-separator">/</span>
     <span class="breadcrumb-current">Исправление дубликатов</span>
   </div>
 
-  <div class="header">
-    <h2>База данных: {{ databaseName() }}</h2>
-  </div>
-
   <div class="content-wrapper">
-    <div class="left-panel">
-      <div class="section">
+    <!-- <div class="left-panel"> -->
+      <!-- <div class="section">
         <h3 class="section-title">Список групп дубликатов</h3>
         <div class="groups-list">
           <div class="groups-header">
@@ -38,11 +34,11 @@
         <div class="actions-bottom">
           <button pButton type="button" label="Сохранить изменения" (click)="onSaveChanges()"></button>
         </div>
-      </div>
-    </div>
+      </div> -->
+    <!-- </div> -->
 
-    <div class="right-panel" *ngIf="selectedGroup()">
-      <div class="section">
+    <div class="right-panel">
+      <!-- <div class="section">
         <div class="proposed-name">
           <span class="label">Предлагаемое название:</span>
           <span class="value">{{ selectedGroup()!.proposedName }}</span>
@@ -71,9 +67,9 @@
           <button pButton type="button" label="Объединить" (click)="onMerge()"></button>
           <button pButton type="button" label="Разделить" (click)="onSplit()"></button>
         </div>
-      </div>
+      </div> -->
 
-      <div class="section">
+      <!-- <div class="section">
         <h3 class="section-title">Финальная строка:</h3>
         <p-table [value]="[selectedGroup()!.finalString]" [tableStyle]="{ 'min-width': '50rem' }">
           <ng-template pTemplate="header">
@@ -97,37 +93,58 @@
             </tr>
           </ng-template>
         </p-table>
-      </div>
+      </div> -->
 
       <div class="section">
-        <h3 class="section-title">Строки дубликатов в БД:</h3>
-        <p-table [value]="selectedGroup()!.duplicates" [tableStyle]="{ 'min-width': '50rem' }">
+        <h3 class="section-title">Найденные дубликаты:</h3>
+        <p-table [value]="duplicates()" [tableStyle]="{ 'min-width': '50rem' }" [loading]="loading()">
           <ng-template pTemplate="header">
             <tr>
-              <th>№</th>
-              <th>Артикул</th>
-              <th>Срок годности</th>
-              <th>Цена</th>
-              <th>Поставщик</th>
-              <th>Категория товара</th>
+              <th></th>
+              <th>Наименование 1</th>
+              <th>Наименование 2</th>
+              <th>Итоговое наименование</th>
+              <th>Векторное расстояние</th>
+              <th>Вероятность дубликата</th>
             </tr>
           </ng-template>
-          <ng-template pTemplate="body" let-record>
+          <ng-template pTemplate="body" let-record let-index="rowIndex">
             <tr>
-              <td>{{ record.id }}</td>
-              <td>{{ record.article }}</td>
-              <td>{{ record.shelfLife }}</td>
-              <td>{{ record.price }}</td>
-              <td>{{ record.supplier }}</td>
-              <td>{{ record.category }}</td>
+              <td>
+                <p-checkbox [value]="checks()[index]" [binary]="true" (onChange)="onChangeCheckbox(index)"></p-checkbox>   
+              </td>
+              <td>{{ record.title_one }}</td>
+              <td>{{ record.title_two }}</td>
+              <td style="display: flex; align-items:center; gap: 8px; justify-content: space-between; width: 300px;">
+                @if (!suggestedNames()[index].editing) {
+                  {{suggestedNames()[index].value || '-'}}
+                  <p-button
+                    [style]="{ 'margin-left': 'auto' }"
+                    type="button"
+                    severity="secondary"
+                    icon="pi pi-pencil"
+                    class="p-button-text p-button-plain"
+                    (click)="onEditSuggestedName(index)"
+                  ></p-button>
+                } @else {
+                  <input #suggestedName type="text" [value]="suggestedNames()[index].value" pInputText />
+                  <p-button
+                    type="button"
+                    icon="pi pi-check"
+                    class="p-button-text p-button-plain"
+                    (click)="onSaveSuggestedName(index, suggestedName.value)"
+                  ></p-button>
+                }
+              </td>
+              <td>{{ record.distance }}</td>
+              <td>{{ record.duplicate_likelihood }}</td>
             </tr>
           </ng-template>
         </p-table>
       </div>
-
       <div class="actions-bottom">
         <button pButton type="button" label="Отменить" [outlined]="true" (click)="onCancel()"></button>
-        <button pButton type="button" label="Сохранить" (click)="onSave()"></button>
+        <button pButton type="button" label="Сохранить" [disabled]="!saveBtnEnabled()" (click)="onSave()"></button>
       </div>
     </div>
   </div>

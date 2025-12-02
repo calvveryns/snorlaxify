@@ -1,32 +1,17 @@
-import { Component, signal } from '@angular/core';
+import { Component, computed, DestroyRef, inject, linkedSignal, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router, RouterModule } from '@angular/router';
-import { FormsModule } from '@angular/forms';
+import { FormControl, FormsModule, ReactiveFormsModule } from '@angular/forms';
 import { TableModule } from 'primeng/table';
 import { ButtonModule } from 'primeng/button';
 import { CardModule } from 'primeng/card';
 import { CheckboxModule } from 'primeng/checkbox';
 import { InputTextModule } from 'primeng/inputtext';
 import { TooltipModule } from 'primeng/tooltip';
-
-interface DuplicateRecord {
-  id: number;
-  article: string;
-  shelfLife: string;
-  price: number;
-  supplier: string;
-  category: string;
-}
-
-interface DuplicateGroup {
-  id: number;
-  name: string;
-  checked: boolean;
-  proposedName: string;
-  duplicatesCount: number;
-  finalString: DuplicateRecord;
-  duplicates: DuplicateRecord[];
-}
+import { ProcessService } from '../../shared/process.service';
+import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
+import { BehaviorSubject, tap, debounceTime, switchMap, map, take } from 'rxjs';
+import { MessageService } from 'primeng/api';
 
 @Component({
   selector: 'app-duplicates-correction-page',
@@ -41,130 +26,79 @@ interface DuplicateGroup {
     CheckboxModule,
     InputTextModule,
     TooltipModule,
+    ReactiveFormsModule,
   ],
   templateUrl: './duplicates-correction-page.html',
   styleUrl: './duplicates-correction-page.scss',
+  providers: [ProcessService],
 })
 export class DuplicatesCorrectionPage {
   protected readonly databaseName = signal<string>('');
-  protected readonly duplicateGroups = signal<DuplicateGroup[]>([]);
-  protected readonly selectedGroup = signal<DuplicateGroup | null>(null);
 
-  constructor(
-    private route: ActivatedRoute,
-    private router: Router
-  ) {
-    const processId = this.route.snapshot.paramMap.get('id');
-    if (processId) {
-      const decodedId = decodeURIComponent(processId);
-      this.databaseName.set(decodedId || 'БД_КаталогПродуктов');
-      this.loadDuplicateGroups();
-    }
-  }
+  processService = inject(ProcessService);
+  messageService = inject(MessageService);
+  router = inject(Router);
+  route = inject(ActivatedRoute);
+  destroyRef = inject(DestroyRef);
 
-  private loadDuplicateGroups() {
-    // Mock data based on the image description
-    const mockGroups: DuplicateGroup[] = [
-      {
-        id: 1,
-        name: 'Группа 1: Минеральная вода',
-        checked: true,
-        proposedName: 'Минеральная вода',
-        duplicatesCount: 4,
-        finalString: {
-          id: 1,
-          article: 'BORJ-05',
-          shelfLife: '24 месяца',
-          price: 89.5,
-          supplier: 'Georgia Trade, ИмпортТрейд',
-          category: 'Минеральная вода',
-        },
-        duplicates: [
-          {
-            id: 276,
-            article: 'BORJ-05',
-            shelfLife: '24 месяца',
-            price: 89.5,
-            supplier: 'ИмпортТрейд',
-            category: 'Воды минеральные',
-          },
-          {
-            id: 398,
-            article: 'BORJ',
-            shelfLife: '24 м',
-            price: 89.5,
-            supplier: 'Georgia Trade',
-            category: 'Вода питьевая',
-          },
-          {
-            id: 401,
-            article: 'Borjomi',
-            shelfLife: '24 мес',
-            price: 89.5,
-            supplier: 'ИмпортТрейд',
-            category: 'Лечебные воды',
-          },
-          {
-            id: 567,
-            article: 'BORJ-0505',
-            shelfLife: '24 мес.',
-            price: 89.5,
-            supplier: 'Georgia Trade',
-            category: 'Минеральные воды',
-          },
-        ],
-      },
-      {
-        id: 2,
-        name: 'Группа 2: Печенье',
-        checked: false,
-        proposedName: 'Печенье',
-        duplicatesCount: 3,
-        finalString: {
-          id: 1,
-          article: 'COOK-01',
-          shelfLife: '12 месяцев',
-          price: 45.0,
-          supplier: 'Кондитерская фабрика',
-          category: 'Печенье',
-        },
-        duplicates: [],
-      },
-      {
-        id: 3,
-        name: 'Группа 3: Молоко безлактозное',
-        checked: false,
-        proposedName: 'Молоко безлактозное',
-        duplicatesCount: 2,
-        finalString: {
-          id: 1,
-          article: 'MILK-LF-01',
-          shelfLife: '7 дней',
-          price: 120.0,
-          supplier: 'Молочный комбинат',
-          category: 'Молоко безлактозное',
-        },
-        duplicates: [],
-      },
-    ];
+  update$ = new BehaviorSubject<void>(void 0);
+  loading = signal(false);
+  uuid = this.route.snapshot.paramMap.get('id')!;
 
-    this.duplicateGroups.set(mockGroups);
-    this.selectedGroup.set(mockGroups[0]);
-  }
+  protected readonly duplicates = toSignal(
+    this.update$.pipe(
+      tap(() => this.loading.set(true)),
+      debounceTime(300),
+      switchMap(() => this.processService.getProcess(this.uuid)),
+      tap(() => this.loading.set(false)),
+      map(process => process.recommendations.results),
+    ),
+    { initialValue: [] }
+  )
 
-  protected onGroupSelect(group: DuplicateGroup) {
-    this.selectedGroup.set(group);
-  }
+  checks = linkedSignal(() => {
+    return this.duplicates().map(() => false);
+  });
 
-  protected onGroupCheck(group: DuplicateGroup, checked: boolean) {
-    this.duplicateGroups.update((groups) =>
-      groups.map((g) => (g.id === group.id ? { ...g, checked } : g))
-    );
-  }
+  saveBtnEnabled = computed(() => {
+    return this.checks().some(checked => !!checked);
+  });
+
+  suggestedNames = linkedSignal(() => {
+    return this.duplicates().map((dup) => ({
+      editing: false,
+      value: dup.suggested_name
+    }));
+  });
 
   protected onSelect() {
     console.log('Select clicked');
     // TODO: Implement select logic
+  }
+
+  onChangeCheckbox(index: number) {
+    const currentControls = this.checks();
+    currentControls[index] = !currentControls[index];
+    this.checks.set([...currentControls]);
+  }
+
+  onEditSuggestedName(index: number) {
+    const currentNames = this.suggestedNames();
+    currentNames[index].editing = true;
+    currentNames.forEach((name, i) => {
+      if (i !== index) {
+        name.editing = false;
+      }
+    });
+    this.suggestedNames.set(currentNames);
+  }
+
+  onSaveSuggestedName(index: number, newName: string) {
+    const currentNames = this.suggestedNames();
+    currentNames[index].editing = false;
+    currentNames[index].value = newName;
+    
+    this.suggestedNames.set(currentNames);
   }
 
   protected onMerge() {
@@ -183,12 +117,25 @@ export class DuplicatesCorrectionPage {
   }
 
   protected onCancel() {
-    this.router.navigate(['/processes']);
+    this.router.navigate(['/processes', this.uuid]);
   }
 
   protected onSave() {
-    console.log('Save clicked');
-    // TODO: Implement save logic
+    const request = this.duplicates()
+      .map((dup, index) => ({
+        ...dup,
+        suggested_name: this.suggestedNames()[index].value,
+      }))
+      .filter((_, index) => this.checks()[index]);
+
+    this.processService.acceptRecommendations(this.uuid, request)
+    .pipe(
+      takeUntilDestroyed(this.destroyRef),
+    )
+    .subscribe(() => {
+      this.messageService.add({severity:'success', summary: 'Готово!', detail: 'Дубликаты успешно исправлены'});
+      this.router.navigate(['/processes', this.uuid]);
+    });
   }
 }
 

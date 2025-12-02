@@ -24,14 +24,11 @@ export type Process = {
 };
 
 export type RecommedationDTO = {
-    results: {
-        "distance": number,
-        "title_one": string,
-        "title_two": string,
-        "suggested_name": string,
-        "duplicate_likelihood": string,
-    }[]
-
+    "distance": number,
+    "title_one": string,
+    "title_two": string,
+    "suggested_name": string,
+    "duplicate_likelihood": string,
 }
 
 export type ProcessDTO = {
@@ -41,7 +38,9 @@ export type ProcessDTO = {
     "started_at": string,
     "completed_at": string,
     "paused_at": string,
-    "recommendations": RecommedationDTO[],
+    "recommendations": {
+        results: RecommedationDTO[]
+    },
     "current_step": number,
     "total_steps": number
 };
@@ -87,5 +86,9 @@ export class ProcessService {
 
     deleteProcess(uuid: string): Observable<void> {
         return this.http.delete<void>(`${baseUrl}/${prefix}/pipeline/${uuid}`, {});
+    }
+
+    acceptRecommendations(uuid: string, recommendations: RecommedationDTO[]): Observable<void> {
+        return this.http.post<void>(`${baseUrl}/${prefix}/pipeline/${uuid}/resolve`, recommendations);
     }
 }

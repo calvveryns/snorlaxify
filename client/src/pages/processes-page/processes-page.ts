@@ -1,4 +1,4 @@
-import { Component, signal, ViewChild } from '@angular/core';
+import { Component, DestroyRef, inject, signal, ViewChild } from '@angular/core';
 import { TableModule } from 'primeng/table';
 import { TagModule } from 'primeng/tag';
 import { CommonModule, DatePipe } from '@angular/common';
@@ -9,6 +9,10 @@ import { TooltipModule } from 'primeng/tooltip';
 import { ConfirmDialogModule } from 'primeng/confirmdialog';
 import { ConfirmationService, MessageService } from 'primeng/api';
 import { CreateProcessDialog, ProcessFormData } from '@features/process';
+import { ProcessesResponse, ProcessService } from '../../shared/process.service';
+import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
+import { HttpClient } from '@angular/common/http';
+import { BehaviorSubject, debounce, debounceTime, switchMap, take, tap } from 'rxjs';
 
 const statuses = ['new', 'running', 'completed', 'failed'] as const;
 
@@ -25,47 +29,31 @@ const statuses = ['new', 'running', 'completed', 'failed'] as const;
     ConfirmDialogModule,
     CreateProcessDialog,
   ],
-  providers: [ConfirmationService, MessageService],
+
+  providers: [ConfirmationService, MessageService, ProcessService,],
   templateUrl: './processes-page.html',
   styleUrl: './processes-page.scss',
 })
 export class ProcessesPage {
-  constructor(
-    private router: Router,
-    private confirmationService: ConfirmationService
-  ) {}
+
+  private readonly processService = inject(ProcessService);
+  private router = inject(Router);
+  private destroyRef = inject(DestroyRef);
+  private confirmationService = inject(ConfirmationService);
 
   protected readonly statuses = statuses;
 
-  protected readonly rows = signal<{
-    date: string;
-    databaseName: string;
-    duplicatesFound: number;
-    processingTime: string;
-    status: typeof statuses[number];
-  }[]>([
-    {
-      date: new Date().toISOString(),
-      databaseName: 'customers-db',
-      duplicatesFound: 12,
-      processingTime: '00:02:14',
-      status: 'completed',
-    },
-    {
-      date: new Date(Date.now() - 86400000).toISOString(),
-      databaseName: 'orders-db',
-      duplicatesFound: 5,
-      processingTime: '00:01:03',
-      status: 'failed',
-    },
-    {
-      date: new Date(Date.now() - 2 * 86400000).toISOString(),
-      databaseName: 'analytics-db',
-      duplicatesFound: 0,
-      processingTime: '00:05:27',
-      status: 'completed',
-    },
-  ]);
+  update$ = new BehaviorSubject<void>(void 0);
+  loading = signal(false);
+
+  protected readonly rows = toSignal(
+    this.update$.pipe(
+      tap(() => this.loading.set(true)),
+      debounceTime(300),
+      switchMap(() => this.processService.getProcesses()),
+      tap(() => this.loading.set(false)),
+    ),
+  )
 
   protected getSeverity(status: typeof this.statuses[number]) {
     switch (status) {
@@ -82,10 +70,8 @@ export class ProcessesPage {
 
   @ViewChild(CreateProcessDialog) createProcessDialog!: CreateProcessDialog;
 
-  protected onRowClick(row: { date: string; databaseName: string }) {
-    // Use databaseName as ID for navigation
-    const processId = encodeURIComponent(row.databaseName);
-    this.router.navigate(['/processes', processId]);
+  protected onRowClick(uuid: string) {
+    this.router.navigate(['/processes', uuid]);
   }
 
   protected openCreateDialog() {
@@ -93,8 +79,10 @@ export class ProcessesPage {
   }
 
   protected onSaveProcess(formData: ProcessFormData) {
-    // Placeholder: integrate API call here later
-    console.log('Create process:', formData);
+    this.processService.startProcess().pipe(
+      take(1),
+      takeUntilDestroyed(this.destroyRef),
+    ).subscribe(() => this.update$.next());
   }
 
 
@@ -102,7 +90,6 @@ export class ProcessesPage {
     if (event) {
       event.stopPropagation();
     }
-    // Load process data for editing (mock data for now)
     const processData: ProcessFormData = {
       scheduleMode: 'daily',
       startTime: '12:00',
@@ -121,23 +108,24 @@ export class ProcessesPage {
     this.createProcessDialog.openForEdit(processData, row.databaseName);
   }
 
-  protected deleteProcess(row: { date: string; databaseName: string }, event?: Event) {
+  protected deleteProcess(uuid: string, event?: Event) {
     if (event) {
       event.stopPropagation();
     }
     
     this.confirmationService.confirm({
-      message: `Вы уверены, что хотите удалить процесс "${row.databaseName}"?`,
+      message: `Вы уверены, что хотите удалить процесс "${uuid}"?`,
       header: 'Подтверждение удаления',
       icon: 'pi pi-exclamation-triangle',
       acceptLabel: 'Удалить',
       rejectLabel: 'Отмена',
       accept: () => {
-        // Placeholder: integrate API call here later
-        console.log('Delete process:', row.databaseName);
-        this.rows.update((currentRows) =>
-          currentRows.filter((r) => r.databaseName !== row.databaseName)
-        );
+        this.processService.deleteProcess(uuid).pipe(
+          take(1),
+          takeUntilDestroyed(this.destroyRef),
+        ).subscribe(() => {
+          this.update$.next();
+        });
       },
     });
   }

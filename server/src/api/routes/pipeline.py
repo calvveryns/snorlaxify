@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from server.src.config import settings
 from server.src.databases import SourceDatabase
 from server.src.processes.pipeline import pipeline, get_pipeline_controller, remove_pipeline_controller
+from server.src.utils.recommender import ProductPair
 
 logger = logging.getLogger(__name__)
 
@@ -220,3 +221,37 @@ async def delete_pipeline(task_id: str, source_db: SourceDatabase = Depends(get_
         message=f"Pipeline task {task_id} and its results have been deleted",
         task_id=task_id
     )
+
+
+@router.post("/pipeline/{task_id}/resolve", response_model=PipelineResponse)
+async def resolve_duplicates(task_id: str, pairs_to_resolve: List[ProductPair], source_db: SourceDatabase = Depends(get_source_db)):
+    task = source_db.get_pipeline_task(task_id)
+    if not task:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Task {task_id} not found"
+        )
+
+    if task["status"] != "completed":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Task {task_id} is not completed. Current status: {task['status']}"
+        )
+
+    recommendations = source_db.get_pipeline_final_result(task_id)
+    if not recommendations:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No recommendations found for task {task_id}"
+        )
+
+    resolved_count = source_db.resolve_pipeline_result(
+        [pair.dict() for pair in pairs_to_resolve]
+    )
+
+    return PipelineResponse(
+        status="resolved",
+        message=f"Resolved {resolved_count} selected duplicate pairs for task {task_id}",
+        task_id=task_id,
+    )
+

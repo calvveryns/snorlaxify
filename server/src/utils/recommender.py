@@ -62,12 +62,8 @@ class Recommender:
 
                 payload = {
                     "model": self.model,
-                    "messages": [{
-                        "role": "user",
-                        "content": prompt
-                    }],
+                    "prompt": prompt,
                     "think": False,
-                    "reasoning": False,
                     "stream": False,
                     "format": ProductPairs.model_json_schema(),
                     "options": {
@@ -82,7 +78,11 @@ class Recommender:
                 data = response.json()
 
                 content = None
-                if "message" in data and "content" in data["message"]:
+                if "response" in data and data["response"]:
+                    content = data["response"]
+                elif "thinking" in data and data["thinking"]:
+                    content = data["thinking"]
+                elif "message" in data and "content" in data["message"]:
                     content = data["message"]["content"]
                 elif "completion" in data:
                     content = data["completion"]

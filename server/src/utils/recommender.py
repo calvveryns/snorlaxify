@@ -108,6 +108,12 @@ class Recommender:
 
             try:
                 validated = ProductPairs.model_validate_json(content)
+                if not self._matches_input_pairs(pairs, validated):
+                    logger.error("LLM returned pairs that do not match the candidate input")
+                    return {
+                        "results": [],
+                        "message": "The model response contains pairs outside the input candidate list!",
+                    }
                 return validated.model_dump(mode="json")
             except ValidationError as ve:
                 logger.error(f"Validation error: {ve}")
@@ -134,3 +140,17 @@ class Recommender:
                 "results": [],
                 "message": "Error while analyzing duplicates!",
             }
+
+    @staticmethod
+    def _pair_key(payload: dict) -> tuple[int, int, str, str]:
+        return (
+            payload["item_one_id"],
+            payload["item_two_id"],
+            payload["title_one"],
+            payload["title_two"],
+        )
+
+    def _matches_input_pairs(self, input_pairs: list[dict], output_pairs: ProductPairs) -> bool:
+        expected_keys = {self._pair_key(pair) for pair in input_pairs}
+        actual_keys = {self._pair_key(pair.model_dump(mode="json")) for pair in output_pairs.results}
+        return len(output_pairs.results) == len(input_pairs) and actual_keys == expected_keys

@@ -6,6 +6,7 @@ from enum import Enum
 
 import psycopg2
 from psycopg2.extras import Json
+from psycopg2 import sql
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,57 @@ class DatabaseManager:
 
 
 class SourceDatabase(DatabaseManager):
+    def reassign_item_references(self, cursor, source_item_id: int, target_item_id: int):
+        if source_item_id == target_item_id:
+            return
+
+        cursor.execute(
+            """
+                SELECT
+                    src_ns.nspname AS source_schema,
+                    src.relname AS source_table,
+                    src_att.attname AS source_column
+                FROM pg_constraint con
+                JOIN pg_class src
+                    ON src.oid = con.conrelid
+                JOIN pg_namespace src_ns
+                    ON src_ns.oid = src.relnamespace
+                JOIN pg_class tgt
+                    ON tgt.oid = con.confrelid
+                JOIN pg_namespace tgt_ns
+                    ON tgt_ns.oid = tgt.relnamespace
+                JOIN unnest(con.conkey) WITH ORDINALITY AS src_col(attnum, ord)
+                    ON TRUE
+                JOIN unnest(con.confkey) WITH ORDINALITY AS tgt_col(attnum, ord)
+                    ON src_col.ord = tgt_col.ord
+                JOIN pg_attribute src_att
+                    ON src_att.attrelid = src.oid
+                    AND src_att.attnum = src_col.attnum
+                JOIN pg_attribute tgt_att
+                    ON tgt_att.attrelid = tgt.oid
+                    AND tgt_att.attnum = tgt_col.attnum
+                WHERE con.contype = 'f'
+                    AND tgt_ns.nspname = 'public'
+                    AND tgt.relname = 'items'
+                    AND tgt_att.attname = 'id'
+                    AND cardinality(con.conkey) = 1
+                    AND cardinality(con.confkey) = 1
+            """
+        )
+        references = cursor.fetchall()
+
+        for source_schema, source_table, source_column in references:
+            update_sql = sql.SQL("""
+                UPDATE {schema}.{table}
+                SET {column} = %s
+                WHERE {column} = %s
+            """).format(
+                schema=sql.Identifier(source_schema),
+                table=sql.Identifier(source_table),
+                column=sql.Identifier(source_column),
+            )
+            cursor.execute(update_sql, (target_item_id, source_item_id))
+
     @staticmethod
     def normalize_pipeline_result(recommendations: Any) -> Dict[str, Any]:
         if recommendations is None:
@@ -114,14 +166,25 @@ class SourceDatabase(DatabaseManager):
     def get_identifiers(self) -> List[Dict[str, Any]]:
         with self.get_cursor() as (cursor, conn):
             cursor.execute("""
-                SELECT id, (name::json->>'en') AS name
+                SELECT
+                    id,
+                    COALESCE(name::json->>'en', name::json->>'ru') AS name,
+                    path::text AS path,
+                    "typeId",
+                    "typeIdentifier"
                 FROM items
                 WHERE "typeId" = 7
                 AND "deletedAt" IS NULL
             """)
             rows = cursor.fetchall()
             return [
-                {"item_id": row[0], "name": row[1]}
+                {
+                    "item_id": row[0],
+                    "name": row[1],
+                    "path": row[2],
+                    "type_id": row[3],
+                    "type_identifier": row[4],
+                }
                 for row in rows
                 if row[1]
             ]
@@ -419,14 +482,45 @@ class SourceDatabase(DatabaseManager):
                     processed_count += 1
                     continue
 
+                self.reassign_item_references(cursor, item_two_id, item_one_id)
+
                 if suggested_name:
                     update_name_sql = """
                         UPDATE items
-                        SET name = jsonb_set(name, '{en}', to_jsonb(%s::text))
+                        SET name = CASE
+                            WHEN name ? 'ru' AND name ? 'en' THEN
+                                jsonb_set(
+                                    jsonb_set(name, '{ru}', to_jsonb(%s::text)),
+                                    '{en}',
+                                    to_jsonb(%s::text)
+                                )
+                            WHEN name ? 'ru' THEN
+                                jsonb_set(
+                                    jsonb_set(name, '{ru}', to_jsonb(%s::text)),
+                                    '{en}',
+                                    to_jsonb(%s::text),
+                                    true
+                                )
+                            WHEN name ? 'en' THEN
+                                jsonb_set(name, '{en}', to_jsonb(%s::text))
+                            ELSE
+                                jsonb_build_object('en', %s::text)
+                        END
                         WHERE id = %s
                         AND "deletedAt" IS NULL
                     """
-                    cursor.execute(update_name_sql, (suggested_name, item_one_id))
+                    cursor.execute(
+                        update_name_sql,
+                        (
+                            suggested_name,
+                            suggested_name,
+                            suggested_name,
+                            suggested_name,
+                            suggested_name,
+                            suggested_name,
+                            item_one_id,
+                        ),
+                    )
 
                     update_vector_sql = """
                         UPDATE vector_data

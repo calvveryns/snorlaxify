@@ -12,6 +12,16 @@ from server.src.utils.recommender import Recommender
 logger = logging.getLogger(__name__)
 
 
+def build_vectorizer_input(identifier: dict) -> str:
+    fields = [
+        ("name", identifier.get("name")),
+        ("type_id", identifier.get("type_id")),
+        ("type_identifier", identifier.get("type_identifier")),
+        ("path", identifier.get("path")),
+    ]
+    return "\n".join(f"{label}: {value}" for label, value in fields if value not in (None, ""))
+
+
 class PipelineController:
     def __init__(self):
         self._pause_event = threading.Event()
@@ -83,7 +93,7 @@ def pipeline(task_id: str, source_db: SourceDatabase, start_from_step: int = 0):
                     ):
                         controller.wait_if_paused()
                         try:
-                            vector = vectorizer.vectorize(identifier["name"])
+                            vector = vectorizer.vectorize(build_vectorizer_input(identifier))
                             source_db.insert_or_update_vector(
                                 identifier["item_id"],
                                 identifier["name"],

@@ -18,6 +18,8 @@ export enum Step {
 export type DuplicateLikelihood = 'high' | 'medium' | 'low';
 
 export type DuplicateRecommendation = {
+  item_one_id: number;
+  item_two_id: number;
   distance: number;
   title_one: string;
   title_two: string;
@@ -31,6 +33,8 @@ export type PipelineRecommendationsDTO = {
 };
 
 export type ResolvePairPayload = {
+  item_one_id: number;
+  item_two_id: number;
   title_one: string;
   title_two: string;
   action: 'merge' | 'ignore';

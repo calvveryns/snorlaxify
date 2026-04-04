@@ -10,6 +10,26 @@ from server.src.databases.database import SourceDatabase
 class FakeSourceDatabase:
     def __init__(self):
         self.resolved_pairs = None
+        self.recommendations = [
+            {
+                'item_one_id': 101,
+                'item_two_id': 102,
+                'title_one': 'Borjomi 0.5',
+                'title_two': 'Borjomi 500ml',
+                'distance': 0.02,
+                'duplicate_likelihood': 'high',
+                'suggested_name': 'Borjomi 0.5',
+            },
+            {
+                'item_one_id': 201,
+                'item_two_id': 202,
+                'title_one': 'Cookie',
+                'title_two': 'Cookies',
+                'distance': 0.07,
+                'duplicate_likelihood': 'low',
+                'suggested_name': None,
+            }
+        ]
 
     def get_pipeline_task(self, task_id: str):
         return {
@@ -24,19 +44,17 @@ class FakeSourceDatabase:
         }
 
     def get_pipeline_final_result(self, task_id: str):
-        return [
-            {
-                'title_one': 'Borjomi 0.5',
-                'title_two': 'Borjomi 500ml',
-                'distance': 0.02,
-                'duplicate_likelihood': 'high',
-                'suggested_name': 'Borjomi 0.5',
-            }
-        ]
+        return self.recommendations
 
     def resolve_pipeline_result(self, pairs_to_resolve):
         self.resolved_pairs = pairs_to_resolve
         return len(pairs_to_resolve)
+
+    def remove_resolved_pairs_from_result(self, task_id: str, pairs_to_resolve):
+        self.recommendations = SourceDatabase.filter_unresolved_recommendations(
+            self.recommendations,
+            pairs_to_resolve,
+        )
 
 
 class PipelineContractTests(unittest.TestCase):
@@ -53,6 +71,8 @@ class PipelineContractTests(unittest.TestCase):
         normalized = SourceDatabase.normalize_pipeline_result(
             [
                 {
+                    'item_one_id': 101,
+                    'item_two_id': 102,
                     'title_one': 'A',
                     'title_two': 'B',
                     'distance': 0.01,
@@ -65,6 +85,8 @@ class PipelineContractTests(unittest.TestCase):
             {
                 'results': [
                     {
+                        'item_one_id': 101,
+                        'item_two_id': 102,
                         'title_one': 'A',
                         'title_two': 'B',
                         'distance': 0.01,
@@ -85,11 +107,22 @@ class PipelineContractTests(unittest.TestCase):
                 'recommendations': {
                     'results': [
                         {
+                            'item_one_id': 101,
+                            'item_two_id': 102,
                             'title_one': 'Borjomi 0.5',
                             'title_two': 'Borjomi 500ml',
                             'distance': 0.02,
                             'duplicate_likelihood': 'high',
                             'suggested_name': 'Borjomi 0.5',
+                        },
+                        {
+                            'item_one_id': 201,
+                            'item_two_id': 202,
+                            'title_one': 'Cookie',
+                            'title_two': 'Cookies',
+                            'distance': 0.07,
+                            'duplicate_likelihood': 'low',
+                            'suggested_name': None,
                         }
                     ]
                 },
@@ -102,12 +135,16 @@ class PipelineContractTests(unittest.TestCase):
             json={
                 'pairs': [
                     {
+                        'item_one_id': 101,
+                        'item_two_id': 102,
                         'title_one': 'Borjomi 0.5',
                         'title_two': 'Borjomi 500ml',
                         'action': 'merge',
                         'suggested_name': 'Borjomi 0.5',
                     },
                     {
+                        'item_one_id': 201,
+                        'item_two_id': 202,
                         'title_one': 'Cookie',
                         'title_two': 'Cookies',
                         'action': 'ignore',
@@ -123,18 +160,26 @@ class PipelineContractTests(unittest.TestCase):
             self.fake_db.resolved_pairs,
             [
                 {
+                    'item_one_id': 101,
+                    'item_two_id': 102,
                     'title_one': 'Borjomi 0.5',
                     'title_two': 'Borjomi 500ml',
                     'action': 'merge',
                     'suggested_name': 'Borjomi 0.5',
                 },
                 {
+                    'item_one_id': 201,
+                    'item_two_id': 202,
                     'title_one': 'Cookie',
                     'title_two': 'Cookies',
                     'action': 'ignore',
                     'suggested_name': None,
                 },
             ],
+        )
+        self.assertEqual(
+            self.fake_db.recommendations,
+            {'results': []},
         )
 
 

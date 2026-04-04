@@ -79,16 +79,52 @@ class SourceDatabase(DatabaseManager):
 
         return {"results": [], "message": "Unsupported recommendations payload"}
 
-    def get_identifiers(self) -> List[str]:
+    @staticmethod
+    def filter_unresolved_recommendations(
+        recommendations: Any,
+        pairs_to_resolve: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        normalized = SourceDatabase.normalize_pipeline_result(recommendations)
+        results = normalized.get("results", [])
+        if not results or not pairs_to_resolve:
+            return normalized
+
+        def pair_key(payload: Dict[str, Any]) -> tuple[Any, Any]:
+            if payload.get("item_one_id") is not None and payload.get("item_two_id") is not None:
+                return ("id", payload.get("item_one_id"), payload.get("item_two_id"))
+            return ("title", payload.get("title_one"), payload.get("title_two"))
+
+        resolved_keys = {
+            pair_key(pair)
+            for pair in pairs_to_resolve
+            if pair.get("title_one") and pair.get("title_two")
+        }
+
+        remaining_results = [
+            recommendation
+            for recommendation in results
+            if pair_key(recommendation) not in resolved_keys
+        ]
+
+        payload: Dict[str, Any] = {"results": remaining_results}
+        if normalized.get("message"):
+            payload["message"] = normalized["message"]
+        return payload
+
+    def get_identifiers(self) -> List[Dict[str, Any]]:
         with self.get_cursor() as (cursor, conn):
             cursor.execute("""
-                SELECT (name::json->>'en') AS name
+                SELECT id, (name::json->>'en') AS name
                 FROM items
                 WHERE "typeId" = 7
                 AND "deletedAt" IS NULL
             """)
             rows = cursor.fetchall()
-            return [row[0] for row in rows]
+            return [
+                {"item_id": row[0], "name": row[1]}
+                for row in rows
+                if row[1]
+            ]
 
     def setup_vector_extension(self):
         with self.get_cursor() as (cursor, conn):
@@ -99,28 +135,47 @@ class SourceDatabase(DatabaseManager):
         create_table_sql = """
             CREATE TABLE IF NOT EXISTS vector_data (
                 id SERIAL PRIMARY KEY,
-                identifier TEXT UNIQUE NOT NULL,
+                item_id BIGINT UNIQUE NOT NULL,
+                identifier TEXT NOT NULL,
                 vector vector(768) NOT NULL
             )
         """
         with self.get_cursor() as (cursor, conn):
             cursor.execute(create_table_sql)
+            cursor.execute(
+                "ALTER TABLE vector_data ADD COLUMN IF NOT EXISTS item_id BIGINT"
+            )
+            cursor.execute(
+                "ALTER TABLE vector_data ADD COLUMN IF NOT EXISTS identifier TEXT"
+            )
+            cursor.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_vector_data_item_id ON vector_data(item_id)"
+            )
+            cursor.execute(
+                "ALTER TABLE vector_data DROP CONSTRAINT IF EXISTS vector_data_identifier_key"
+            )
+            cursor.execute(
+                "DROP INDEX IF EXISTS vector_data_identifier_key"
+            )
             conn.commit()
 
-    def insert_or_update_vector(self, identifier: str, vector: List[float]):
+    def insert_or_update_vector(self, item_id: int, identifier: str, vector: List[float]):
         insert_sql = """
-            INSERT INTO vector_data (identifier, vector)
-            VALUES (%s, %s)
-            ON CONFLICT (identifier) DO UPDATE
-            SET vector = EXCLUDED.vector
+            INSERT INTO vector_data (item_id, identifier, vector)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (item_id) DO UPDATE
+            SET identifier = EXCLUDED.identifier,
+                vector = EXCLUDED.vector
         """
         with self.get_cursor() as (cursor, conn):
-            cursor.execute(insert_sql, (identifier, vector))
+            cursor.execute(insert_sql, (item_id, identifier, vector))
             conn.commit()
 
     def get_close_pairs(self) -> List[Dict[str, float]]:
         query_sql = """
             SELECT
+                item_one.item_id AS item_one_id,
+                item_two.item_id AS item_two_id,
                 item_one.identifier AS title_one,
                 item_two.identifier AS title_two,
                 item_one.vector <=> item_two.vector AS distance
@@ -134,11 +189,21 @@ class SourceDatabase(DatabaseManager):
             cursor.execute(query_sql)
             rows = cursor.fetchall()
             return [
-                {"title_one": row[0], "title_two": row[1], "distance": float(row[2])}
+                {
+                    "item_one_id": row[0],
+                    "item_two_id": row[1],
+                    "title_one": row[2],
+                    "title_two": row[3],
+                    "distance": float(row[4]),
+                }
                 for row in rows
             ]
 
     def create_pipeline_tables(self):
+        create_archive_table = """
+            CREATE TABLE IF NOT EXISTS items_archive (LIKE items INCLUDING ALL)
+        """
+
         create_tasks_table = """
             CREATE TABLE IF NOT EXISTS pipeline_tasks (
                 id SERIAL PRIMARY KEY,
@@ -171,6 +236,7 @@ class SourceDatabase(DatabaseManager):
         """
 
         with self.get_cursor() as (cursor, conn):
+            cursor.execute(create_archive_table)
             cursor.execute(create_tasks_table)
             cursor.execute(create_results_table)
             cursor.execute(create_indexes)
@@ -317,6 +383,20 @@ class SourceDatabase(DatabaseManager):
             logger.error(f"Error getting pipeline result for task {task_id}: {e}")
             return None
 
+    def remove_resolved_pairs_from_result(self, task_id: str, pairs_to_resolve: List[Dict[str, Any]]):
+        if not pairs_to_resolve:
+            return
+
+        recommendations = self.get_pipeline_final_result(task_id)
+        if recommendations is None:
+            return
+
+        remaining_recommendations = self.filter_unresolved_recommendations(
+            recommendations,
+            pairs_to_resolve,
+        )
+        self.save_pipeline_result(task_id, remaining_recommendations)
+
     def resolve_pipeline_result(self, pairs_to_resolve: List[Dict[str, Any]]) -> int:
         if not pairs_to_resolve:
             return 0
@@ -325,12 +405,14 @@ class SourceDatabase(DatabaseManager):
 
         with self.get_cursor() as (cursor, conn):
             for pair in pairs_to_resolve:
+                item_one_id = pair.get("item_one_id")
+                item_two_id = pair.get("item_two_id")
                 title_one = pair.get("title_one")
                 title_two = pair.get("title_two")
                 suggested_name = pair.get("suggested_name") or pair.get("suggest_name")
                 action = pair.get("action", "merge")
 
-                if not title_one or not title_two:
+                if item_one_id is None or item_two_id is None or not title_one or not title_two:
                     continue
 
                 if action == "ignore":
@@ -341,26 +423,37 @@ class SourceDatabase(DatabaseManager):
                     update_name_sql = """
                         UPDATE items
                         SET name = jsonb_set(name, '{en}', to_jsonb(%s::text))
-                        WHERE (name::json->>'en') = %s
+                        WHERE id = %s
                         AND "deletedAt" IS NULL
                     """
-                    cursor.execute(update_name_sql, (suggested_name, title_one))
+                    cursor.execute(update_name_sql, (suggested_name, item_one_id))
 
-                delete_sql = """
-                    UPDATE items
-                    SET "deletedAt" = CURRENT_TIMESTAMP
-                    WHERE (name::json->>'en') = %s
-                    AND "typeId" = 7
-                    AND "deletedAt" IS NULL
+                    update_vector_sql = """
+                        UPDATE vector_data
+                        SET identifier = %s
+                        WHERE item_id = %s
+                    """
+                    cursor.execute(update_vector_sql, (suggested_name, item_one_id))
+
+                archive_and_delete_sql = """
+                    WITH moved_rows AS (
+                        DELETE FROM items
+                        WHERE id = %s
+                        AND "deletedAt" IS NULL
+                        RETURNING *
+                    )
+                    INSERT INTO items_archive
+                    SELECT *
+                    FROM moved_rows
                 """
-                cursor.execute(delete_sql, (title_two,))
+                cursor.execute(archive_and_delete_sql, (item_two_id,))
 
                 if cursor.rowcount > 0:
                     vector_delete_sql = """
                         DELETE FROM vector_data
-                        WHERE identifier = %s
+                        WHERE item_id = %s
                     """
-                    cursor.execute(vector_delete_sql, (title_two,))
+                    cursor.execute(vector_delete_sql, (item_two_id,))
                     processed_count += 1
 
             conn.commit()

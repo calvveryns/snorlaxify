@@ -83,8 +83,12 @@ def pipeline(task_id: str, source_db: SourceDatabase, start_from_step: int = 0):
                     ):
                         controller.wait_if_paused()
                         try:
-                            vector = vectorizer.vectorize(identifier)
-                            source_db.insert_or_update_vector(identifier, vector)
+                            vector = vectorizer.vectorize(identifier["name"])
+                            source_db.insert_or_update_vector(
+                                identifier["item_id"],
+                                identifier["name"],
+                                vector,
+                            )
                         except Exception as e:
                             logger.error(f"Error processing identifier {identifier}: {e}")
                     source_db.update_pipeline_task_status(task_id, "running", current_step=1)

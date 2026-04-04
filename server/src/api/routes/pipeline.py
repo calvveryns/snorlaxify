@@ -282,9 +282,9 @@ async def resolve_duplicates(
             detail=f"No recommendations found for task {task_id}"
         )
 
-    resolved_count = source_db.resolve_pipeline_result(
-        [pair.model_dump(mode="json") for pair in request.pairs]
-    )
+    resolved_pairs = [pair.model_dump(mode="json") for pair in request.pairs]
+    resolved_count = source_db.resolve_pipeline_result(resolved_pairs)
+    source_db.remove_resolved_pairs_from_result(task_id, resolved_pairs)
 
     return ResolveResultResponse(
         status="resolved",

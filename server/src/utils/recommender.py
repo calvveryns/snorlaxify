@@ -10,6 +10,8 @@ logger = logging.getLogger(__name__)
 
 
 class CandidatePair(BaseModel):
+    item_one_id: int
+    item_two_id: int
     title_one: str
     title_two: str
     distance: float
@@ -25,6 +27,8 @@ class ProductPairs(BaseModel):
 
 
 class ResolvePair(BaseModel):
+    item_one_id: int
+    item_two_id: int
     title_one: str
     title_two: str
     action: Literal["merge", "ignore"]

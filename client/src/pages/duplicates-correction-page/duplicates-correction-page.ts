@@ -20,6 +20,8 @@ type DecisionAction = 'merge' | 'ignore';
 
 type DuplicateGroup = {
   id: number;
+  itemOneId: number;
+  itemTwoId: number;
   name: string;
   checked: boolean;
   titleOne: string;
@@ -111,6 +113,8 @@ export class DuplicatesCorrectionPage {
 
     return {
       id: index + 1,
+      itemOneId: item.item_one_id,
+      itemTwoId: item.item_two_id,
       name: `Пара ${index + 1}`,
       checked: false,
       titleOne: item.title_one,
@@ -209,6 +213,8 @@ export class DuplicatesCorrectionPage {
     return this.duplicateGroups()
       .filter((group) => group.checked)
       .map((group) => ({
+        item_one_id: group.itemOneId,
+        item_two_id: group.itemTwoId,
         title_one: group.titleOne,
         title_two: group.titleTwo,
         action: group.action,

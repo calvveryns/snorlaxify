@@ -23,6 +23,7 @@ type DuplicateGroupItem = {
   title: string;
   distance: number;
   isAnchor: boolean;
+  selected: boolean;
 };
 
 type DuplicateGroup = {
@@ -115,15 +116,16 @@ export class DuplicatesCorrectionPage {
   }
 
   private mapRecommendationToGroup(item: DuplicateRecommendation, index: number): DuplicateGroup {
+    const action: DecisionAction = item.duplicate_likelihood === 'low' ? 'ignore' : 'merge';
     const items = item.items.map((groupItem) => ({
       itemId: groupItem.item_id,
       title: groupItem.title,
       distance: groupItem.distance,
       isAnchor: groupItem.is_anchor,
+      selected: groupItem.is_anchor ? true : action === 'merge',
     }));
     const anchorItem = items.find((groupItem) => groupItem.isAnchor) ?? items[0];
     const proposedName = item.suggested_name?.trim() || anchorItem?.title || `Группа ${index + 1}`;
-    const action: DecisionAction = item.duplicate_likelihood === 'low' ? 'ignore' : 'merge';
 
     return {
       id: index + 1,
@@ -170,6 +172,16 @@ export class DuplicatesCorrectionPage {
     this.updateGroup(group.id, {
       editedName: value,
       checked: true,
+    });
+  }
+
+  protected onItemSelectionChange(group: DuplicateGroup, itemId: number, selected: boolean) {
+    this.updateGroup(group.id, {
+      items: group.items.map((item) =>
+        item.itemId === itemId && !item.isAnchor ? { ...item, selected } : item
+      ),
+      checked: true,
+      action: 'merge',
     });
   }
 
@@ -220,6 +232,14 @@ export class DuplicatesCorrectionPage {
     return action === 'merge' ? 'Объединить' : 'Игнорировать';
   }
 
+  protected getSelectedDuplicatesCount(group: DuplicateGroup) {
+    return group.items.filter((item) => !item.isAnchor && item.selected).length;
+  }
+
+  protected getIgnoredDuplicatesCount(group: DuplicateGroup) {
+    return group.items.filter((item) => !item.isAnchor && !item.selected).length;
+  }
+
   private updateGroup(id: number, patch: Partial<DuplicateGroup>) {
     this.duplicateGroups.update((groups) =>
       groups.map((group) => (group.id === id ? { ...group, ...patch } : group))
@@ -227,17 +247,61 @@ export class DuplicatesCorrectionPage {
   }
 
   private buildResolvePayload(): ResolvePairPayload[] {
-    return this.duplicateGroups()
-      .filter((group) => group.checked)
-      .map((group) => ({
-        anchor_item_id: group.anchorItemId,
-        items: group.items.map((item) => ({
-          item_id: item.itemId,
-          title: item.title,
-        })),
-        action: group.action,
-        suggested_name:
-          group.action === 'merge' ? (group.editedName.trim() || group.proposedName) : null,
-      }));
+    return this.duplicateGroups().flatMap((group) => {
+      if (!group.checked) {
+        return [];
+      }
+
+      if (!group.items.some((item) => item.isAnchor)) {
+        return [];
+      }
+
+      const selectedItems = group.items.filter((item) => item.isAnchor || item.selected);
+      const ignoredItems = group.items.filter((item) => item.isAnchor || !item.selected);
+      const payload: ResolvePairPayload[] = [];
+
+      if (group.action === 'ignore') {
+        if (group.items.length < 2) {
+          return [];
+        }
+
+        payload.push({
+          anchor_item_id: group.anchorItemId,
+          items: group.items.map((item) => ({
+            item_id: item.itemId,
+            title: item.title,
+          })),
+          action: 'ignore',
+          suggested_name: null,
+        });
+        return payload;
+      }
+
+      if (selectedItems.length >= 2) {
+        payload.push({
+          anchor_item_id: group.anchorItemId,
+          items: selectedItems.map((item) => ({
+            item_id: item.itemId,
+            title: item.title,
+          })),
+          action: 'merge',
+          suggested_name: group.editedName.trim() || group.proposedName,
+        });
+      }
+
+      if (ignoredItems.length >= 2 && this.getIgnoredDuplicatesCount(group) > 0) {
+        payload.push({
+          anchor_item_id: group.anchorItemId,
+          items: ignoredItems.map((item) => ({
+            item_id: item.itemId,
+            title: item.title,
+          })),
+          action: 'ignore',
+          suggested_name: null,
+        });
+      }
+
+      return payload;
+    });
   }
 }

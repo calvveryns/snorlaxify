@@ -244,6 +244,12 @@
   color: #333;
 }
 
+.selection-hint {
+  margin: -8px 0 20px;
+  font-size: 13px;
+  color: #666;
+}
+
 .label,
 .input-label {
   font-weight: 600;
@@ -292,6 +298,12 @@ input[pInputText] {
       background-color: #f9f9f9;
     }
   }
+}
+
+.anchor-label {
+  font-size: 13px;
+  color: #666;
+  font-weight: 500;
 }
 
 @media (max-width: 1100px) {

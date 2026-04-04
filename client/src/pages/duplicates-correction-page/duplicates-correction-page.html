@@ -77,18 +77,27 @@
           <div><span class="label">Вероятность дубля:</span> {{ getLikelihoodLabel(group.duplicateLikelihood) }}</div>
           <div><span class="label">Макс. distance:</span> {{ group.maxDistance | number: '1.3-3' }}</div>
           <div><span class="label">Записей:</span> {{ group.items.length }}</div>
+          <div><span class="label">К объединению:</span> {{ getSelectedDuplicatesCount(group) }}</div>
+          <div><span class="label">Игнорировать:</span> {{ getIgnoredDuplicatesCount(group) }}</div>
         </div>
 
         <div class="action-buttons">
-          <button pButton type="button" label="Объединить" (click)="onMerge(group)"></button>
+          <button pButton type="button" label="Объединить выбранные" (click)="onMerge(group)"></button>
           <button
             pButton
             type="button"
-            label="Игнорировать"
+            label="Игнорировать всю группу"
             [outlined]="true"
             (click)="onIgnore(group)"
           ></button>
         </div>
+
+        <p class="selection-hint" *ngIf="group.action === 'merge'">
+          Отмеченные записи будут объединены с базовой, снятые записи будут проигнорированы.
+        </p>
+        <p class="selection-hint" *ngIf="group.action === 'ignore'">
+          Для этой группы будет применено полное игнорирование независимо от чекбоксов.
+        </p>
 
         <label class="input-label" for="suggested-name">Итоговое имя</label>
         <input
@@ -108,6 +117,7 @@
         >
           <ng-template pTemplate="header">
             <tr>
+              <th>Действие</th>
               <th>Роль</th>
               <th>ID</th>
               <th>Значение</th>
@@ -116,6 +126,19 @@
           </ng-template>
           <ng-template pTemplate="body" let-row>
             <tr>
+              <td>
+                <ng-container *ngIf="row.isAnchor; else rowSelector">
+                  <span class="anchor-label">Оставить</span>
+                </ng-container>
+                <ng-template #rowSelector>
+                  <p-checkbox
+                    [binary]="true"
+                    [ngModel]="row.selected"
+                    [disabled]="group.action === 'ignore'"
+                    (ngModelChange)="onItemSelectionChange(group, row.itemId, $event)"
+                  ></p-checkbox>
+                </ng-template>
+              </td>
               <td>{{ row.isAnchor ? 'Базовая запись' : 'Дубликат' }}</td>
               <td>{{ row.itemId }}</td>
               <td>{{ row.title }}</td>

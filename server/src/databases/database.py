@@ -142,6 +142,58 @@ class SourceDatabase(DatabaseManager):
         if not results or not pairs_to_resolve:
             return normalized
 
+        def apply_group_resolution(
+            recommendation: Dict[str, Any],
+            payload: Dict[str, Any],
+        ) -> Optional[Dict[str, Any]]:
+            recommendation_items = recommendation.get("items")
+            payload_items = payload.get("items")
+            if not isinstance(recommendation_items, list) or not isinstance(payload_items, list):
+                return recommendation
+
+            recommendation_item_ids = [
+                item.get("item_id")
+                for item in recommendation_items
+                if item.get("item_id") is not None
+            ]
+            payload_item_ids = [
+                item.get("item_id")
+                for item in payload_items
+                if item.get("item_id") is not None
+            ]
+            if len(recommendation_item_ids) < 2 or len(payload_item_ids) < 2:
+                return recommendation
+
+            recommendation_anchor_id = (
+                recommendation.get("anchor_item_id") or recommendation_item_ids[0]
+            )
+            payload_anchor_id = payload.get("anchor_item_id") or payload_item_ids[0]
+            if recommendation_anchor_id != payload_anchor_id:
+                return recommendation
+
+            if not set(payload_item_ids).issubset(set(recommendation_item_ids)):
+                return recommendation
+
+            resolved_duplicate_ids = {
+                item_id
+                for item_id in payload_item_ids
+                if item_id != recommendation_anchor_id
+            }
+            if not resolved_duplicate_ids:
+                return recommendation
+
+            remaining_items = [
+                item
+                for item in recommendation_items
+                if item.get("item_id") not in resolved_duplicate_ids
+            ]
+            if len(remaining_items) < 2:
+                return None
+
+            updated_recommendation = dict(recommendation)
+            updated_recommendation["items"] = remaining_items
+            return updated_recommendation
+
         def pair_key(payload: Dict[str, Any]) -> tuple[Any, ...]:
             items = payload.get("items")
             if isinstance(items, list) and items:
@@ -159,11 +211,22 @@ class SourceDatabase(DatabaseManager):
 
         resolved_keys = {pair_key(pair) for pair in pairs_to_resolve}
 
-        remaining_results = [
-            recommendation
-            for recommendation in results
-            if pair_key(recommendation) not in resolved_keys
-        ]
+        remaining_results = []
+        for recommendation in results:
+            current_recommendation: Optional[Dict[str, Any]] = recommendation
+
+            for pair in pairs_to_resolve:
+                if current_recommendation is None:
+                    break
+                current_recommendation = apply_group_resolution(current_recommendation, pair)
+
+            if current_recommendation is None:
+                continue
+
+            if pair_key(current_recommendation) in resolved_keys:
+                continue
+
+            remaining_results.append(current_recommendation)
 
         payload: Dict[str, Any] = {"results": remaining_results}
         if normalized.get("message"):

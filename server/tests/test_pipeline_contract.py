@@ -250,6 +250,79 @@ class PipelineContractTests(unittest.TestCase):
             {'results': []},
         )
 
+    def test_filter_unresolved_recommendations_supports_partial_group_resolution(self):
+        recommendations = {
+            'results': [
+                {
+                    'anchor_item_id': 101,
+                    'items': [
+                        {
+                            'item_id': 101,
+                            'title': 'Borjomi 0.5',
+                            'distance': 0.0,
+                            'is_anchor': True,
+                        },
+                        {
+                            'item_id': 102,
+                            'title': 'Borjomi 500ml',
+                            'distance': 0.02,
+                            'is_anchor': False,
+                        },
+                        {
+                            'item_id': 103,
+                            'title': 'Borjomi 0,5 л',
+                            'distance': 0.03,
+                            'is_anchor': False,
+                        },
+                    ],
+                    'duplicate_likelihood': 'high',
+                    'suggested_name': 'Borjomi 0.5',
+                }
+            ]
+        }
+
+        remaining = SourceDatabase.filter_unresolved_recommendations(
+            recommendations,
+            [
+                {
+                    'anchor_item_id': 101,
+                    'items': [
+                        {'item_id': 101, 'title': 'Borjomi 0.5'},
+                        {'item_id': 102, 'title': 'Borjomi 500ml'},
+                    ],
+                    'action': 'merge',
+                    'suggested_name': 'Borjomi 0.5',
+                }
+            ],
+        )
+
+        self.assertEqual(
+            remaining,
+            {
+                'results': [
+                    {
+                        'anchor_item_id': 101,
+                        'items': [
+                            {
+                                'item_id': 101,
+                                'title': 'Borjomi 0.5',
+                                'distance': 0.0,
+                                'is_anchor': True,
+                            },
+                            {
+                                'item_id': 103,
+                                'title': 'Borjomi 0,5 л',
+                                'distance': 0.03,
+                                'is_anchor': False,
+                            },
+                        ],
+                        'duplicate_likelihood': 'high',
+                        'suggested_name': 'Borjomi 0.5',
+                    }
+                ]
+            },
+        )
+
 
 if __name__ == '__main__':
     unittest.main()

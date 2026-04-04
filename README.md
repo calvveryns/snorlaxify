@@ -217,6 +217,126 @@ DELETE /api/pipeline/{task_id}
 ```
 #### Разрешение дубликатов
 
+## 📏 Метрики качества дедупликации
+
+В backend добавлен утилитарный модуль для offline-оценки качества дедупликации:
+`server/src/utils/dedup_metrics.py`.
+
+Он считает:
+- `pair_precision`, `pair_recall`, `pair_f1` на размеченном pair-датасете
+- `candidate_stage.precision`, `candidate_stage.recall`, `candidate_stage.f1`
+- `final_stage.precision`, `final_stage.recall`, `final_stage.f1`
+- `false_merge_rate`
+- `coverage`
+
+Для полного offline-прогона pipeline по размеченному benchmark-датасету добавлен runner:
+`server/src/evaluation/benchmark.py`
+и CLI:
+`server/evaluate_benchmark.py`
+
+Поддерживаются два формата входа:
+- список пар вида `{"item_one_id": 1, "item_two_id": 2}`
+- размеченный список пар вида `{"item_one_id": 1, "item_two_id": 2, "is_duplicate": true}`
+- список групп вида `{"items": [{"item_id": 1}, {"item_id": 2}, {"item_id": 3}]}`
+
+Пример использования:
+
+```python
+from server.src.utils.dedup_metrics import (
+    build_pair_set_from_groups,
+    calculate_pair_metrics_on_labeled_dataset,
+    build_pair_set_from_pairs,
+    calculate_deduplication_quality_metrics,
+)
+
+gold_pairs = build_pair_set_from_groups(gold_groups)
+candidate_pairs = build_pair_set_from_pairs(candidate_stage_pairs)
+predicted_pairs = build_pair_set_from_groups(predicted_duplicate_groups)
+labeled_pairs_report = calculate_pair_metrics_on_labeled_dataset(
+    predicted_duplicate_pairs=predicted_pairs,
+    labeled_pairs=labeled_pairs,
+)
+
+report = calculate_deduplication_quality_metrics(
+    candidate_pairs=candidate_pairs,
+    predicted_duplicate_pairs=predicted_pairs,
+    gold_duplicate_pairs=gold_pairs,
+)
+
+print(labeled_pairs_report.to_dict())
+print(report.to_dict())
+```
+
+Интерпретация:
+- `pair_precision`, `pair_recall`, `pair_f1` считаются напрямую на размеченном датасете пар.
+- `candidate_stage` показывает качество candidate generation до LLM/финальной логики.
+- `final_stage` показывает качество итоговых merge-рекомендаций.
+- `false_merge_rate` показывает долю ложных объединений среди всех предложенных merge.
+- `coverage` показывает, какую долю эталонных дублей удалось покрыть итоговыми merge-рекомендациями.
+
+## 🧪 Benchmark-датасет
+
+Формат benchmark JSON повторяет поля из `public.items` в `openpim.sql` и добавляет разметку пар:
+
+```json
+{
+  "items": [
+    {
+      "identifier": "Metalll445",
+      "path": "7.15.425",
+      "name": { "en": "Арматура №10х6000-А500С" },
+      "typeId": 7,
+      "typeIdentifier": "Metalll",
+      "parentIdentifier": "NMAb",
+      "values": {},
+      "fileOrigName": "",
+      "storagePath": "",
+      "mimeType": "",
+      "id": 425,
+      "tenantId": "default",
+      "createdBy": "admin",
+      "updatedBy": "admin",
+      "createdAt": "2024-10-30T06:34:41.446+00:00",
+      "updatedAt": "2024-10-30T06:34:41.446+00:00",
+      "deletedAt": null,
+      "channels": {}
+    }
+  ],
+  "labeled_pairs": [
+    { "item_one_id": 425, "item_two_id": 426, "is_duplicate": true }
+  ]
+}
+```
+
+Готовый пример лежит в [datasets/benchmark/example_labeled_dataset.json](/Users/npredein/repositories/snorlaxify/datasets/benchmark/example_labeled_dataset.json).
+
+Запуск оценки:
+
+```bash
+python server/evaluate_benchmark.py datasets/benchmark/example_labeled_dataset.json
+```
+
+Если benchmark запускается с хоста, а в `.env` стоят Docker-URL вида `http://host.docker.internal:11434/...`,
+runner автоматически подменит `host.docker.internal` на `localhost`.
+
+При необходимости URL и модели можно переопределить явно:
+
+```bash
+python server/evaluate_benchmark.py \
+  datasets/benchmark/example_labeled_dataset.json \
+  --vectorizer-url http://localhost:11434/api/embed \
+  --llm-url http://localhost:11434/api/chat \
+  --vectorizer-model embeddinggemma:latest \
+  --llm-model qwen3:4b
+```
+
+Что делает runner:
+- берет `items` из benchmark JSON;
+- строит тот же `vectorizer_input`, что и основной pipeline;
+- вызывает текущий vectorizer;
+- строит candidate groups по cosine distance и той же логике grouping;
+- вызывает текущий recommender;
+- считает `pair_precision`, `pair_recall`, `pair_f1` и stage-метрики качества.
 ```http
 
 POST /api/pipeline/{task_id}/resolve

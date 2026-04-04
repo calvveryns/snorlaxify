@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Literal, Optional
+
 import requests
 from pydantic import BaseModel, ValidationError
-from typing import Literal, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,49 @@ class ProductDecisions(BaseModel):
     results: list[ProductDecision]
 
 
+class CandidateGroupItem(BaseModel):
+    item_id: int
+    title: str
+    distance: float
+    is_anchor: bool
+
+
+class CandidateGroup(BaseModel):
+    anchor_item_id: int
+    items: list[CandidateGroupItem]
+
+
+class ProductGroup(CandidateGroup):
+    duplicate_likelihood: Literal["high", "low"]
+    suggested_name: Optional[str]
+
+
+class ProductGroups(BaseModel):
+    results: list[ProductGroup]
+
+
+class GroupDecision(BaseModel):
+    anchor_item_id: int
+    duplicate_item_ids: list[int]
+    suggested_name: Optional[str]
+
+
+class GroupDecisions(BaseModel):
+    results: list[GroupDecision]
+
+
+class ResolveGroupItem(BaseModel):
+    item_id: int
+    title: str
+
+
+class ResolveGroup(BaseModel):
+    anchor_item_id: int
+    items: list[ResolveGroupItem]
+    action: Literal["merge", "ignore"]
+    suggested_name: Optional[str] = None
+
+
 class ResolvePair(BaseModel):
     item_one_id: int
     item_two_id: int
@@ -46,7 +90,8 @@ class ResolvePair(BaseModel):
 
 
 class ResolveRequest(BaseModel):
-    pairs: list[ResolvePair]
+    groups: list[ResolveGroup] = []
+    pairs: list[ResolvePair] = []
 
 
 class Recommender:
@@ -54,17 +99,17 @@ class Recommender:
         self.api_url = api_url
         self.model = model
 
-    def recommend_duplicates(self, pairs_json: str) -> dict:
+    def recommend_duplicates(self, groups_json: str) -> dict:
         try:
-            pairs = json.loads(pairs_json)
-            if not pairs:
+            groups = json.loads(groups_json)
+            if not groups:
                 return {
                     "results": [],
                     "message": "No elements for analysis",
                 }
 
             results: list[dict] = []
-            for index, batch in enumerate(self._chunk_pairs(pairs, batch_size=25), start=1):
+            for index, batch in enumerate(self._chunk_pairs(groups, batch_size=1), start=1):
                 decisions = self._request_batch(index, batch)
                 if not decisions:
                     continue
@@ -99,24 +144,42 @@ class Recommender:
         )
 
     @staticmethod
+    def _group_key(payload: dict) -> tuple[int, tuple[int, ...]]:
+        return (
+            payload["anchor_item_id"],
+            tuple(
+                item["item_id"]
+                for item in payload["items"]
+                if not item.get("is_anchor")
+            ),
+        )
+
+    @staticmethod
     def _chunk_pairs(pairs: list[dict], batch_size: int) -> list[list[dict]]:
         return [pairs[i:i + batch_size] for i in range(0, len(pairs), batch_size)]
 
-    def _request_batch(self, batch_index: int, batch: list[dict]) -> Optional[ProductDecisions]:
+    def _request_batch(self, batch_index: int, batch: list[dict]) -> Optional[GroupDecisions]:
         compact_batch = [
             {
-                "item_one_id": pair["item_one_id"],
-                "item_two_id": pair["item_two_id"],
-                "title_one": pair["title_one"],
-                "title_two": pair["title_two"],
+                "anchor_item_id": group["anchor_item_id"],
+                "items": [
+                    {
+                        "item_id": item["item_id"],
+                        "title": item["title"],
+                        "is_anchor": item["is_anchor"],
+                    }
+                    for item in group["items"]
+                ],
             }
-            for pair in batch
+            for group in batch
         ]
         prompt = (
-            "Определи, являются ли пары товаров дублями по смыслу.\n"
-            "Если это один и тот же товар с разницей только в написании, верни suggested_name с нормализованным названием.\n"
-            "Если товары разные, верни suggested_name = null.\n"
-            "Верни JSON только для переданных пар. Не пропускай пары и не добавляй новые.\n\n"
+            "Определи, являются ли группы товаров дублями по смыслу.\n"
+            "Во всех группах первый элемент с is_anchor=true является основной записью.\n"
+            "Если все элементы группы описывают один и тот же товар с разницей только в написании, верни suggested_name с нормализованным названием.\n"
+            "Если внутри группы есть товары с разным смыслом, верни suggested_name = null.\n"
+            "Верни JSON только для переданных групп. Не пропускай группы и не добавляй новые.\n"
+            "duplicate_item_ids должны содержать все item_id элементов группы, кроме anchor_item_id, и в том же порядке.\n\n"
             f"{json.dumps(compact_batch, ensure_ascii=False)}"
         )
 
@@ -129,7 +192,7 @@ class Recommender:
             "think": False,
             "reasoning": False,
             "stream": False,
-            "format": ProductDecisions.model_json_schema(),
+            "format": GroupDecisions.model_json_schema(),
             "options": {
                 "temperature": 0.1,
                 "top_p": 0.8,
@@ -171,9 +234,9 @@ class Recommender:
             return None
 
         try:
-            validated = ProductDecisions.model_validate_json(content)
-            if not self._matches_input_pairs(batch, validated):
-                logger.error("LLM returned pairs that do not match the candidate input for batch %s", batch_index)
+            validated = GroupDecisions.model_validate_json(content)
+            if not self._matches_input_groups(batch, validated):
+                logger.error("LLM returned groups that do not match the candidate input for batch %s", batch_index)
                 return None
             return validated
         except ValidationError as ve:
@@ -185,19 +248,36 @@ class Recommender:
         actual_keys = {self._pair_key(pair.model_dump(mode="json")) for pair in output_pairs.results}
         return len(output_pairs.results) == len(input_pairs) and actual_keys == expected_keys
 
+    def _matches_input_groups(self, input_groups: list[dict], output_groups: GroupDecisions) -> bool:
+        expected_keys = {self._group_key(group) for group in input_groups}
+        actual_keys = {
+            (group.anchor_item_id, tuple(group.duplicate_item_ids))
+            for group in output_groups.results
+        }
+        return len(output_groups.results) == len(input_groups) and actual_keys == expected_keys
+
     @staticmethod
-    def _merge_batch_results(batch: list[dict], decisions: ProductDecisions) -> list[dict]:
+    def _merge_batch_results(batch: list[dict], decisions: GroupDecisions) -> list[dict]:
         decisions_map = {
-            (decision.item_one_id, decision.item_two_id): decision
+            (decision.anchor_item_id, tuple(decision.duplicate_item_ids)): decision
             for decision in decisions.results
         }
         merged = []
-        for pair in batch:
-            decision = decisions_map.get((pair["item_one_id"], pair["item_two_id"]))
+        for group in batch:
+            decision = decisions_map.get(
+                (
+                    group["anchor_item_id"],
+                    tuple(
+                        item["item_id"]
+                        for item in group["items"]
+                        if not item.get("is_anchor")
+                    ),
+                )
+            )
             suggested_name = decision.suggested_name if decision else None
             merged.append(
                 {
-                    **pair,
+                    **group,
                     "duplicate_likelihood": "high" if suggested_name else "low",
                     "suggested_name": suggested_name,
                 }

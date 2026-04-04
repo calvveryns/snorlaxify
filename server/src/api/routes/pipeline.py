@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from server.src.config import settings
 from server.src.databases import SourceDatabase
 from server.src.processes.pipeline import pipeline, get_pipeline_controller, remove_pipeline_controller
-from server.src.utils.recommender import ProductPairs, ResolveRequest
+from server.src.utils.recommender import ProductGroups, ResolveRequest
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ class TaskStatus(BaseModel):
 class PipelineResultResponse(BaseModel):
     task_id: str
     status: str
-    recommendations: ProductPairs
+    recommendations: ProductGroups
 
 
 class ResolveResultResponse(PipelineResponse):
@@ -165,7 +165,7 @@ async def get_task_result(task_id: str, source_db: SourceDatabase = Depends(get_
     return PipelineResultResponse(
         task_id=task_id,
         status=task["status"],
-        recommendations=ProductPairs.model_validate(recommendations),
+        recommendations=ProductGroups.model_validate(recommendations),
     )
 
 
@@ -282,13 +282,20 @@ async def resolve_duplicates(
             detail=f"No recommendations found for task {task_id}"
         )
 
-    resolved_pairs = [pair.model_dump(mode="json") for pair in request.pairs]
+    resolved_payload = request.groups or request.pairs
+    if not resolved_payload:
+        raise HTTPException(
+            status_code=400,
+            detail="No groups selected for resolution"
+        )
+
+    resolved_pairs = [pair.model_dump(mode="json") for pair in resolved_payload]
     resolved_count = source_db.resolve_pipeline_result(resolved_pairs)
     source_db.remove_resolved_pairs_from_result(task_id, resolved_pairs)
 
     return ResolveResultResponse(
         status="resolved",
-        message=f"Resolved {resolved_count} selected duplicate pairs for task {task_id}",
+        message=f"Resolved {resolved_count} selected duplicate groups for task {task_id}",
         task_id=task_id,
         resolved_count=resolved_count,
     )

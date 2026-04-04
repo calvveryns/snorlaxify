@@ -17,12 +17,16 @@ export enum Step {
 
 export type DuplicateLikelihood = 'high' | 'medium' | 'low';
 
-export type DuplicateRecommendation = {
-  item_one_id: number;
-  item_two_id: number;
+export type DuplicateGroupItemRecommendation = {
+  item_id: number;
+  title: string;
   distance: number;
-  title_one: string;
-  title_two: string;
+  is_anchor: boolean;
+};
+
+export type DuplicateRecommendation = {
+  anchor_item_id: number;
+  items: DuplicateGroupItemRecommendation[];
   suggested_name: string | null;
   duplicate_likelihood: DuplicateLikelihood;
 };
@@ -33,10 +37,11 @@ export type PipelineRecommendationsDTO = {
 };
 
 export type ResolvePairPayload = {
-  item_one_id: number;
-  item_two_id: number;
-  title_one: string;
-  title_two: string;
+  anchor_item_id: number;
+  items: Array<{
+    item_id: number;
+    title: string;
+  }>;
   action: 'merge' | 'ignore';
   suggested_name: string | null;
 };
@@ -129,7 +134,7 @@ export class ProcessService {
 
   resolveProcess(uuid: string, pairs: ResolvePairPayload[]): Observable<ResolveResponse> {
     return this.http.post<ResolveResponse>(`${baseUrl}/${prefix}/pipeline/${uuid}/resolve`, {
-      pairs,
+      groups: pairs,
     });
   }
 }

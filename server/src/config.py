@@ -10,7 +10,7 @@ class Settings:
 
         self.vectorizer_api_url = os.getenv('VECTORIZER_API_URL')
         self.vectorizer_model = os.getenv('VECTORIZER_MODEL')
-        self.duplicate_distance_threshold = float(os.getenv('DUPLICATE_DISTANCE_THRESHOLD', '0.35'))
+        self.duplicate_distance_threshold = float(os.getenv('DUPLICATE_DISTANCE_THRESHOLD', '0.15'))
 
         self.llm_api_url = os.getenv('LLM_API_URL')
         self.llm_model = os.getenv('LLM_MODEL')

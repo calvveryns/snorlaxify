@@ -1,4 +1,5 @@
 import json
+import hashlib
 import logging
 import re
 import threading
@@ -34,6 +35,28 @@ def build_vectorizer_input(identifier: dict) -> str:
     if normalized_name and normalized_name != name:
         fields.append(("normalized_name", normalized_name))
     return "\n".join(f"{label}: {value}" for label, value in fields if value not in (None, ""))
+
+
+def calculate_vectorizer_input_hash(vectorizer_input: str) -> str:
+    return hashlib.sha256(vectorizer_input.encode("utf-8")).hexdigest()
+
+
+def should_vectorize_identifier(identifier: dict, vectorizer_model: Optional[str]) -> bool:
+    stored_input_hash = identifier.get("stored_vector_input_hash")
+    if not stored_input_hash:
+        return True
+
+    if identifier.get("vector_model") != vectorizer_model:
+        return True
+
+    updated_at = identifier.get("updated_at")
+    vector_source_updated_at = identifier.get("vector_source_updated_at")
+    if updated_at and vector_source_updated_at and updated_at > vector_source_updated_at:
+        return True
+
+    vectorizer_input = build_vectorizer_input(identifier)
+    input_hash = calculate_vectorizer_input_hash(vectorizer_input)
+    return input_hash != stored_input_hash
 
 
 class PipelineController:
@@ -76,7 +99,7 @@ def pipeline(task_id: str, source_db: SourceDatabase, start_from_step: int = 0):
         "Setting up source database",
         "Vectorizing identifiers",
         "Committing changes",
-        "Finding close pairs",
+        "Finding duplicate groups",
         "Requesting recommendations"
     ]
 
@@ -101,17 +124,25 @@ def pipeline(task_id: str, source_db: SourceDatabase, start_from_step: int = 0):
                 if start_from_step <= 1:
                     controller.wait_if_paused()
                     pbar.set_postfix_str(steps[1])
-                    identifiers = source_db.get_identifiers()
+                    identifiers = source_db.get_identifiers_with_vector_metadata()
                     for identifier in tqdm(
                             identifiers, desc="Vectorizing identifiers", unit="item", leave=False
                     ):
                         controller.wait_if_paused()
                         try:
-                            vector = vectorizer.vectorize(build_vectorizer_input(identifier))
+                            vectorizer_input = build_vectorizer_input(identifier)
+                            input_hash = calculate_vectorizer_input_hash(vectorizer_input)
+                            if not should_vectorize_identifier(identifier, settings.vectorizer_model):
+                                continue
+
+                            vector = vectorizer.vectorize(vectorizer_input)
                             source_db.insert_or_update_vector(
                                 identifier["item_id"],
                                 identifier["name"],
                                 vector,
+                                input_hash=input_hash,
+                                source_updated_at=identifier.get("updated_at"),
+                                model=settings.vectorizer_model,
                             )
                         except Exception as e:
                             logger.error(f"Error processing identifier {identifier}: {e}")
@@ -127,11 +158,11 @@ def pipeline(task_id: str, source_db: SourceDatabase, start_from_step: int = 0):
                     pbar.update(1)
                     start_from_step = 3
 
-                # Finding close pairs
+                # Finding duplicate groups
                 if start_from_step <= 3:
                     controller.wait_if_paused()
                     pbar.set_postfix_str(steps[3])
-                    results = source_db.get_close_pairs()
+                    results = source_db.get_close_groups()
                     results_json = json.dumps(results, indent=2)
                     source_db.update_pipeline_task_status(task_id, "running", current_step=3)
                     pbar.update(1)

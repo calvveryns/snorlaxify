@@ -12,20 +12,40 @@ class FakeSourceDatabase:
         self.resolved_pairs = None
         self.recommendations = [
             {
-                'item_one_id': 101,
-                'item_two_id': 102,
-                'title_one': 'Borjomi 0.5',
-                'title_two': 'Borjomi 500ml',
-                'distance': 0.02,
+                'anchor_item_id': 101,
+                'items': [
+                    {
+                        'item_id': 101,
+                        'title': 'Borjomi 0.5',
+                        'distance': 0.0,
+                        'is_anchor': True,
+                    },
+                    {
+                        'item_id': 102,
+                        'title': 'Borjomi 500ml',
+                        'distance': 0.02,
+                        'is_anchor': False,
+                    },
+                ],
                 'duplicate_likelihood': 'high',
                 'suggested_name': 'Borjomi 0.5',
             },
             {
-                'item_one_id': 201,
-                'item_two_id': 202,
-                'title_one': 'Cookie',
-                'title_two': 'Cookies',
-                'distance': 0.07,
+                'anchor_item_id': 201,
+                'items': [
+                    {
+                        'item_id': 201,
+                        'title': 'Cookie',
+                        'distance': 0.0,
+                        'is_anchor': True,
+                    },
+                    {
+                        'item_id': 202,
+                        'title': 'Cookies',
+                        'distance': 0.07,
+                        'is_anchor': False,
+                    },
+                ],
                 'duplicate_likelihood': 'low',
                 'suggested_name': None,
             }
@@ -95,7 +115,7 @@ class PipelineContractTests(unittest.TestCase):
             },
         )
 
-    def test_get_task_result_returns_unified_contract(self):
+    def test_get_task_result_returns_group_contract(self):
         response = self.client.get('/api/pipeline/task-1/result')
 
         self.assertEqual(response.status_code, 200)
@@ -107,20 +127,40 @@ class PipelineContractTests(unittest.TestCase):
                 'recommendations': {
                     'results': [
                         {
-                            'item_one_id': 101,
-                            'item_two_id': 102,
-                            'title_one': 'Borjomi 0.5',
-                            'title_two': 'Borjomi 500ml',
-                            'distance': 0.02,
+                            'anchor_item_id': 101,
+                            'items': [
+                                {
+                                    'item_id': 101,
+                                    'title': 'Borjomi 0.5',
+                                    'distance': 0.0,
+                                    'is_anchor': True,
+                                },
+                                {
+                                    'item_id': 102,
+                                    'title': 'Borjomi 500ml',
+                                    'distance': 0.02,
+                                    'is_anchor': False,
+                                },
+                            ],
                             'duplicate_likelihood': 'high',
                             'suggested_name': 'Borjomi 0.5',
                         },
                         {
-                            'item_one_id': 201,
-                            'item_two_id': 202,
-                            'title_one': 'Cookie',
-                            'title_two': 'Cookies',
-                            'distance': 0.07,
+                            'anchor_item_id': 201,
+                            'items': [
+                                {
+                                    'item_id': 201,
+                                    'title': 'Cookie',
+                                    'distance': 0.0,
+                                    'is_anchor': True,
+                                },
+                                {
+                                    'item_id': 202,
+                                    'title': 'Cookies',
+                                    'distance': 0.07,
+                                    'is_anchor': False,
+                                },
+                            ],
                             'duplicate_likelihood': 'low',
                             'suggested_name': None,
                         }
@@ -129,24 +169,38 @@ class PipelineContractTests(unittest.TestCase):
             },
         )
 
-    def test_resolve_accepts_unified_payload(self):
+    def test_resolve_accepts_group_payload(self):
         response = self.client.post(
             '/api/pipeline/task-1/resolve',
             json={
-                'pairs': [
+                'groups': [
                     {
-                        'item_one_id': 101,
-                        'item_two_id': 102,
-                        'title_one': 'Borjomi 0.5',
-                        'title_two': 'Borjomi 500ml',
+                        'anchor_item_id': 101,
+                        'items': [
+                            {
+                                'item_id': 101,
+                                'title': 'Borjomi 0.5',
+                            },
+                            {
+                                'item_id': 102,
+                                'title': 'Borjomi 500ml',
+                            },
+                        ],
                         'action': 'merge',
                         'suggested_name': 'Borjomi 0.5',
                     },
                     {
-                        'item_one_id': 201,
-                        'item_two_id': 202,
-                        'title_one': 'Cookie',
-                        'title_two': 'Cookies',
+                        'anchor_item_id': 201,
+                        'items': [
+                            {
+                                'item_id': 201,
+                                'title': 'Cookie',
+                            },
+                            {
+                                'item_id': 202,
+                                'title': 'Cookies',
+                            },
+                        ],
                         'action': 'ignore',
                         'suggested_name': None,
                     },
@@ -160,18 +214,32 @@ class PipelineContractTests(unittest.TestCase):
             self.fake_db.resolved_pairs,
             [
                 {
-                    'item_one_id': 101,
-                    'item_two_id': 102,
-                    'title_one': 'Borjomi 0.5',
-                    'title_two': 'Borjomi 500ml',
+                    'anchor_item_id': 101,
+                    'items': [
+                        {
+                            'item_id': 101,
+                            'title': 'Borjomi 0.5',
+                        },
+                        {
+                            'item_id': 102,
+                            'title': 'Borjomi 500ml',
+                        },
+                    ],
                     'action': 'merge',
                     'suggested_name': 'Borjomi 0.5',
                 },
                 {
-                    'item_one_id': 201,
-                    'item_two_id': 202,
-                    'title_one': 'Cookie',
-                    'title_two': 'Cookies',
+                    'anchor_item_id': 201,
+                    'items': [
+                        {
+                            'item_id': 201,
+                            'title': 'Cookie',
+                        },
+                        {
+                            'item_id': 202,
+                            'title': 'Cookies',
+                        },
+                    ],
                     'action': 'ignore',
                     'suggested_name': None,
                 },

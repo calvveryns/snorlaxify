@@ -142,16 +142,22 @@ class SourceDatabase(DatabaseManager):
         if not results or not pairs_to_resolve:
             return normalized
 
-        def pair_key(payload: Dict[str, Any]) -> tuple[Any, Any]:
+        def pair_key(payload: Dict[str, Any]) -> tuple[Any, ...]:
+            items = payload.get("items")
+            if isinstance(items, list) and items:
+                item_ids = tuple(
+                    item.get("item_id")
+                    for item in items
+                    if item.get("item_id") is not None
+                )
+                if item_ids:
+                    return ("group", *item_ids)
+
             if payload.get("item_one_id") is not None and payload.get("item_two_id") is not None:
                 return ("id", payload.get("item_one_id"), payload.get("item_two_id"))
             return ("title", payload.get("title_one"), payload.get("title_two"))
 
-        resolved_keys = {
-            pair_key(pair)
-            for pair in pairs_to_resolve
-            if pair.get("title_one") and pair.get("title_two")
-        }
+        resolved_keys = {pair_key(pair) for pair in pairs_to_resolve}
 
         remaining_results = [
             recommendation
@@ -172,7 +178,8 @@ class SourceDatabase(DatabaseManager):
                     COALESCE(name::json->>'en', name::json->>'ru') AS name,
                     path::text AS path,
                     "typeId",
-                    "typeIdentifier"
+                    "typeIdentifier",
+                    "updatedAt"
                 FROM items
                 WHERE "deletedAt" IS NULL
             """)
@@ -184,6 +191,42 @@ class SourceDatabase(DatabaseManager):
                     "path": row[2],
                     "type_id": row[3],
                     "type_identifier": row[4],
+                    "updated_at": row[5],
+                }
+                for row in rows
+                if row[1]
+            ]
+
+    def get_identifiers_with_vector_metadata(self) -> List[Dict[str, Any]]:
+        with self.get_cursor() as (cursor, conn):
+            cursor.execute("""
+                SELECT
+                    i.id,
+                    COALESCE(i.name::json->>'en', i.name::json->>'ru') AS name,
+                    i.path::text AS path,
+                    i."typeId",
+                    i."typeIdentifier",
+                    i."updatedAt",
+                    vd.input_hash,
+                    vd.model,
+                    vd.source_updated_at
+                FROM items AS i
+                LEFT JOIN vector_data AS vd
+                    ON vd.item_id = i.id
+                WHERE i."deletedAt" IS NULL
+            """)
+            rows = cursor.fetchall()
+            return [
+                {
+                    "item_id": row[0],
+                    "name": row[1],
+                    "path": row[2],
+                    "type_id": row[3],
+                    "type_identifier": row[4],
+                    "updated_at": row[5],
+                    "stored_vector_input_hash": row[6],
+                    "vector_model": row[7],
+                    "vector_source_updated_at": row[8],
                 }
                 for row in rows
                 if row[1]
@@ -200,7 +243,11 @@ class SourceDatabase(DatabaseManager):
                 id SERIAL PRIMARY KEY,
                 item_id BIGINT UNIQUE NOT NULL,
                 identifier TEXT NOT NULL,
-                vector vector(768) NOT NULL
+                vector vector(768) NOT NULL,
+                input_hash TEXT,
+                source_updated_at TIMESTAMPTZ,
+                vectorized_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                model TEXT
             )
         """
         with self.get_cursor() as (cursor, conn):
@@ -210,6 +257,18 @@ class SourceDatabase(DatabaseManager):
             )
             cursor.execute(
                 "ALTER TABLE vector_data ADD COLUMN IF NOT EXISTS identifier TEXT"
+            )
+            cursor.execute(
+                "ALTER TABLE vector_data ADD COLUMN IF NOT EXISTS input_hash TEXT"
+            )
+            cursor.execute(
+                "ALTER TABLE vector_data ADD COLUMN IF NOT EXISTS source_updated_at TIMESTAMPTZ"
+            )
+            cursor.execute(
+                "ALTER TABLE vector_data ADD COLUMN IF NOT EXISTS vectorized_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP"
+            )
+            cursor.execute(
+                "ALTER TABLE vector_data ADD COLUMN IF NOT EXISTS model TEXT"
             )
             cursor.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_vector_data_item_id ON vector_data(item_id)"
@@ -222,45 +281,135 @@ class SourceDatabase(DatabaseManager):
             )
             conn.commit()
 
-    def insert_or_update_vector(self, item_id: int, identifier: str, vector: List[float]):
+    def insert_or_update_vector(
+        self,
+        item_id: int,
+        identifier: str,
+        vector: List[float],
+        input_hash: Optional[str] = None,
+        source_updated_at: Optional[Any] = None,
+        model: Optional[str] = None,
+    ):
         insert_sql = """
-            INSERT INTO vector_data (item_id, identifier, vector)
-            VALUES (%s, %s, %s)
+            INSERT INTO vector_data (
+                item_id,
+                identifier,
+                vector,
+                input_hash,
+                source_updated_at,
+                vectorized_at,
+                model
+            )
+            VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
             ON CONFLICT (item_id) DO UPDATE
             SET identifier = EXCLUDED.identifier,
-                vector = EXCLUDED.vector
+                vector = EXCLUDED.vector,
+                input_hash = EXCLUDED.input_hash,
+                source_updated_at = EXCLUDED.source_updated_at,
+                vectorized_at = CURRENT_TIMESTAMP,
+                model = EXCLUDED.model
         """
         with self.get_cursor() as (cursor, conn):
-            cursor.execute(insert_sql, (item_id, identifier, vector))
+            cursor.execute(
+                insert_sql,
+                (item_id, identifier, vector, input_hash, source_updated_at, model),
+            )
             conn.commit()
 
-    def get_close_pairs(self) -> List[Dict[str, float]]:
-        query_sql = """
+    def get_close_groups(self) -> List[Dict[str, Any]]:
+        query_items_sql = """
+            SELECT id, item_id, identifier
+            FROM vector_data
+            ORDER BY id
+        """
+        query_group_sql = """
             SELECT
-                item_one.item_id AS item_one_id,
-                item_two.item_id AS item_two_id,
-                item_one.identifier AS title_one,
-                item_two.identifier AS title_two,
-                item_one.vector <=> item_two.vector AS distance
-            FROM vector_data AS item_one
-            JOIN vector_data AS item_two
-                ON item_one.id < item_two.id
-            WHERE (item_one.vector <=> item_two.vector) <= %s
-            ORDER BY distance;
+                other.id,
+                other.item_id,
+                other.identifier,
+                base.vector <=> other.vector AS distance
+            FROM vector_data AS base
+            JOIN vector_data AS other
+                ON other.id = ANY(%s)
+            WHERE base.id = %s
+                AND (base.vector <=> other.vector) < %s
+            ORDER BY distance, other.id
         """
         with self.get_cursor() as (cursor, conn):
-            cursor.execute(query_sql, (settings.duplicate_distance_threshold,))
+            cursor.execute(query_items_sql)
             rows = cursor.fetchall()
-            return [
-                {
-                    "item_one_id": row[0],
-                    "item_two_id": row[1],
-                    "title_one": row[2],
-                    "title_two": row[3],
-                    "distance": float(row[4]),
+
+            ordered_vector_ids = [row[0] for row in rows]
+            remaining_items = {
+                row[0]: {
+                    "item_id": row[1],
+                    "title": row[2],
                 }
                 for row in rows
-            ]
+            }
+            groups: List[Dict[str, Any]] = []
+
+            while ordered_vector_ids:
+                base_vector_id = ordered_vector_ids.pop(0)
+                base_item = remaining_items.pop(base_vector_id, None)
+                if not base_item:
+                    continue
+
+                candidate_vector_ids = list(remaining_items.keys())
+                if not candidate_vector_ids:
+                    continue
+
+                cursor.execute(
+                    query_group_sql,
+                    (candidate_vector_ids, base_vector_id, settings.duplicate_distance_threshold),
+                )
+                matched_rows = cursor.fetchall()
+                if not matched_rows:
+                    continue
+
+                group_items = [
+                    {
+                        "item_id": base_item["item_id"],
+                        "title": base_item["title"],
+                        "distance": 0.0,
+                        "is_anchor": True,
+                    }
+                ]
+                matched_vector_ids: List[int] = []
+
+                for row in matched_rows:
+                    matched_vector_id = row[0]
+                    matched_item = remaining_items.pop(matched_vector_id, None)
+                    if not matched_item:
+                        continue
+
+                    matched_vector_ids.append(matched_vector_id)
+                    group_items.append(
+                        {
+                            "item_id": row[1],
+                            "title": row[2],
+                            "distance": float(row[3]),
+                            "is_anchor": False,
+                        }
+                    )
+
+                if len(group_items) > 1:
+                    groups.append(
+                        {
+                            "anchor_item_id": base_item["item_id"],
+                            "items": group_items,
+                        }
+                    )
+
+                if matched_vector_ids:
+                    matched_vector_ids_set = set(matched_vector_ids)
+                    ordered_vector_ids = [
+                        vector_id
+                        for vector_id in ordered_vector_ids
+                        if vector_id not in matched_vector_ids_set
+                    ]
+
+            return groups
 
     def create_pipeline_tables(self):
         create_archive_table = """
@@ -468,6 +617,102 @@ class SourceDatabase(DatabaseManager):
 
         with self.get_cursor() as (cursor, conn):
             for pair in pairs_to_resolve:
+                items = pair.get("items")
+                if isinstance(items, list) and items:
+                    item_ids = [
+                        item.get("item_id")
+                        for item in items
+                        if item.get("item_id") is not None
+                    ]
+                    if len(item_ids) < 2:
+                        continue
+
+                    anchor_item_id = pair.get("anchor_item_id") or item_ids[0]
+                    duplicate_item_ids = [
+                        item_id for item_id in item_ids
+                        if item_id != anchor_item_id
+                    ]
+                    suggested_name = pair.get("suggested_name") or pair.get("suggest_name")
+                    action = pair.get("action", "merge")
+
+                    if not duplicate_item_ids:
+                        continue
+
+                    if action == "ignore":
+                        processed_count += 1
+                        continue
+
+                    for duplicate_item_id in duplicate_item_ids:
+                        self.reassign_item_references(cursor, duplicate_item_id, anchor_item_id)
+
+                    if suggested_name:
+                        update_name_sql = """
+                            UPDATE items
+                            SET name = CASE
+                                WHEN name ? 'ru' AND name ? 'en' THEN
+                                    jsonb_set(
+                                        jsonb_set(name, '{ru}', to_jsonb(%s::text)),
+                                        '{en}',
+                                        to_jsonb(%s::text)
+                                    )
+                                WHEN name ? 'ru' THEN
+                                    jsonb_set(
+                                        jsonb_set(name, '{ru}', to_jsonb(%s::text)),
+                                        '{en}',
+                                        to_jsonb(%s::text),
+                                        true
+                                    )
+                                WHEN name ? 'en' THEN
+                                    jsonb_set(name, '{en}', to_jsonb(%s::text))
+                                ELSE
+                                    jsonb_build_object('en', %s::text)
+                            END
+                            WHERE id = %s
+                            AND "deletedAt" IS NULL
+                        """
+                        cursor.execute(
+                            update_name_sql,
+                            (
+                                suggested_name,
+                                suggested_name,
+                                suggested_name,
+                                suggested_name,
+                                suggested_name,
+                                suggested_name,
+                                anchor_item_id,
+                            ),
+                        )
+
+                        update_vector_sql = """
+                            UPDATE vector_data
+                            SET identifier = %s
+                            WHERE item_id = %s
+                        """
+                        cursor.execute(update_vector_sql, (suggested_name, anchor_item_id))
+
+                    archive_and_delete_sql = """
+                        WITH moved_rows AS (
+                            DELETE FROM items
+                            WHERE id = %s
+                            AND "deletedAt" IS NULL
+                            RETURNING *
+                        )
+                        INSERT INTO items_archive
+                        SELECT *
+                        FROM moved_rows
+                    """
+                    for duplicate_item_id in duplicate_item_ids:
+                        cursor.execute(archive_and_delete_sql, (duplicate_item_id,))
+                        if cursor.rowcount > 0:
+                            vector_delete_sql = """
+                                DELETE FROM vector_data
+                                WHERE item_id = %s
+                            """
+                            cursor.execute(vector_delete_sql, (duplicate_item_id,))
+
+                    processed_count += 1
+                    continue
+
                 item_one_id = pair.get("item_one_id")
                 item_two_id = pair.get("item_two_id")
                 title_one = pair.get("title_one")

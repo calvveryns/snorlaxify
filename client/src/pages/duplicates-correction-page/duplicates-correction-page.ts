@@ -18,16 +18,23 @@ import {
 
 type DecisionAction = 'merge' | 'ignore';
 
+type DuplicateGroupItem = {
+  itemId: number;
+  title: string;
+  distance: number;
+  isAnchor: boolean;
+};
+
 type DuplicateGroup = {
   id: number;
-  itemOneId: number;
-  itemTwoId: number;
+  anchorItemId: number;
   name: string;
   checked: boolean;
-  titleOne: string;
-  titleTwo: string;
+  items: DuplicateGroupItem[];
   duplicateLikelihood: DuplicateLikelihood;
-  distance: number;
+  anchorTitle: string;
+  duplicatesCount: number;
+  maxDistance: number;
   proposedName: string;
   editedName: string;
   action: DecisionAction;
@@ -108,19 +115,29 @@ export class DuplicatesCorrectionPage {
   }
 
   private mapRecommendationToGroup(item: DuplicateRecommendation, index: number): DuplicateGroup {
-    const proposedName = item.suggested_name?.trim() || item.title_one;
+    const items = item.items.map((groupItem) => ({
+      itemId: groupItem.item_id,
+      title: groupItem.title,
+      distance: groupItem.distance,
+      isAnchor: groupItem.is_anchor,
+    }));
+    const anchorItem = items.find((groupItem) => groupItem.isAnchor) ?? items[0];
+    const proposedName = item.suggested_name?.trim() || anchorItem?.title || `Группа ${index + 1}`;
     const action: DecisionAction = item.duplicate_likelihood === 'low' ? 'ignore' : 'merge';
 
     return {
       id: index + 1,
-      itemOneId: item.item_one_id,
-      itemTwoId: item.item_two_id,
-      name: `Пара ${index + 1}`,
+      anchorItemId: item.anchor_item_id,
+      name: `Группа ${index + 1}`,
       checked: false,
-      titleOne: item.title_one,
-      titleTwo: item.title_two,
+      items,
       duplicateLikelihood: item.duplicate_likelihood,
-      distance: item.distance,
+      anchorTitle: anchorItem?.title || proposedName,
+      duplicatesCount: Math.max(items.length - 1, 0),
+      maxDistance: items.reduce(
+        (currentMax, groupItem) => Math.max(currentMax, groupItem.distance),
+        0
+      ),
       proposedName,
       editedName: proposedName,
       action,
@@ -167,7 +184,7 @@ export class DuplicatesCorrectionPage {
   protected onSave() {
     const payload = this.buildResolvePayload();
     if (!payload.length) {
-      this.saveError.set('Выберите хотя бы одну пару и отметьте решение как проверенное.');
+      this.saveError.set('Выберите хотя бы одну группу и отметьте решение как проверенное.');
       this.successMessage.set(null);
       return;
     }
@@ -213,10 +230,11 @@ export class DuplicatesCorrectionPage {
     return this.duplicateGroups()
       .filter((group) => group.checked)
       .map((group) => ({
-        item_one_id: group.itemOneId,
-        item_two_id: group.itemTwoId,
-        title_one: group.titleOne,
-        title_two: group.titleTwo,
+        anchor_item_id: group.anchorItemId,
+        items: group.items.map((item) => ({
+          item_id: item.itemId,
+          title: item.title,
+        })),
         action: group.action,
         suggested_name:
           group.action === 'merge' ? (group.editedName.trim() || group.proposedName) : null,

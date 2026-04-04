@@ -12,13 +12,17 @@ class Settings:
         self.vectorizer_model = os.getenv('VECTORIZER_MODEL')
         self.duplicate_distance_threshold = float(os.getenv('DUPLICATE_DISTANCE_THRESHOLD', '0.15'))
 
+        self.llm_provider = os.getenv('LLM_PROVIDER', 'ollama').strip().lower()
         self.llm_api_url = os.getenv('LLM_API_URL')
         self.llm_model = os.getenv('LLM_MODEL')
+        self.llm_api_key = os.getenv('LLM_API_KEY')
 
         if not self.db_source_url:
             raise ValueError("DB_SOURCE_URL environment variable is required")
         if not self.vectorizer_api_url:
             raise ValueError("VECTORIZER_API_URL environment variable is required")
+        if self.llm_provider not in {'ollama', 'gemini'}:
+            raise ValueError("LLM_PROVIDER must be one of: ollama, gemini")
         if not self.llm_api_url:
             raise ValueError("LLM_API_URL environment variable is required")
 

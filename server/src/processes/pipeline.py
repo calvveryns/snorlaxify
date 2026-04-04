@@ -66,7 +66,12 @@ def remove_pipeline_controller(task_id: str):
 
 def pipeline(task_id: str, source_db: SourceDatabase, start_from_step: int = 0):
     vectorizer = Vectorizer(settings.vectorizer_api_url, settings.vectorizer_model)
-    recommender = Recommender(api_url=settings.llm_api_url, model=settings.llm_model)
+    recommender = Recommender(
+        api_url=settings.llm_api_url,
+        model=settings.llm_model,
+        provider=settings.llm_provider,
+        api_key=settings.llm_api_key,
+    )
     controller = get_pipeline_controller(task_id)
 
     steps = [

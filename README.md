@@ -45,9 +45,15 @@ VECTORIZER_API_URL=http://your-vectorizer-api-url
 VECTORIZER_MODEL=your-vectorizer-model
 
 # API для LLM
+LLM_PROVIDER=ollama
 LLM_API_URL=http://your-llm-api-url
 LLM_MODEL=your-llm-model
+LLM_API_KEY=your-llm-api-key
 ```
+
+`LLM_PROVIDER` поддерживает:
+- `ollama` — текущий локальный формат `/api/chat`
+- `gemini` — Google Gemini `models/*:generateContent`; для прямого вызова обычно нужен `LLM_API_KEY`
 
 ## 🚀 Быстрый старт
 

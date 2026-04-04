@@ -168,8 +168,10 @@ def evaluate_benchmark_dataset(
     top_k: Optional[int] = None,
     vectorizer_api_url: Optional[str] = None,
     vectorizer_model: Optional[str] = None,
+    llm_provider: Optional[str] = None,
     llm_api_url: Optional[str] = None,
     llm_model: Optional[str] = None,
+    llm_api_key: Optional[str] = None,
 ) -> BenchmarkEvaluationResult:
     if vectorizer is None or recommender is None or distance_threshold is None:
         from server.src.config import settings
@@ -183,10 +185,17 @@ def evaluate_benchmark_dataset(
             llm_api_url or settings.llm_api_url
         )
         resolved_vectorizer_model = vectorizer_model or settings.vectorizer_model
+        resolved_llm_provider = llm_provider or settings.llm_provider
         resolved_llm_model = llm_model or settings.llm_model
+        resolved_llm_api_key = llm_api_key or settings.llm_api_key
 
         vectorizer = vectorizer or Vectorizer(resolved_vectorizer_api_url, resolved_vectorizer_model)
-        recommender = recommender or Recommender(resolved_llm_api_url, resolved_llm_model)
+        recommender = recommender or Recommender(
+            resolved_llm_api_url,
+            resolved_llm_model,
+            provider=resolved_llm_provider,
+            api_key=resolved_llm_api_key,
+        )
         distance_threshold = distance_threshold if distance_threshold is not None else settings.duplicate_distance_threshold
 
     items = dataset.get("items") or []

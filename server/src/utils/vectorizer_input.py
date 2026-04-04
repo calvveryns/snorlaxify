@@ -1,19 +1,11 @@
 import hashlib
-import re
 from typing import Optional
 
 
 def normalize_identifier_name(name: Optional[str]) -> str:
     if not name:
         return ""
-    normalized = name.lower()
-    normalized = normalized.replace("№", "")
-    normalized = re.sub(r"[()]", " ", normalized)
-    normalized = re.sub(r"[-_/]", " ", normalized)
-    normalized = re.sub(r"(?<=\d)\s*[xх]\s*(?=\d)", "x", normalized)
-    normalized = re.sub(r"(?<=\d)\s+(?=[a-zа-я])", "", normalized)
-    normalized = re.sub(r"\s+", " ", normalized)
-    return normalized.strip()
+    return name.lower()
 
 
 def build_vectorizer_input(identifier: dict) -> str:

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import requests
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -94,9 +95,21 @@ class ResolveRequest(BaseModel):
 
 
 class Recommender:
-    def __init__(self, api_url: str, model: str):
+    def __init__(
+        self,
+        api_url: str,
+        model: str,
+        *,
+        provider: str = "ollama",
+        api_key: Optional[str] = None,
+    ):
         self.api_url = api_url
         self.model = model
+        self.provider = provider.strip().lower()
+        self.api_key = api_key
+
+        if self.provider not in {"ollama", "gemini"}:
+            raise ValueError(f"Unsupported LLM provider: {self.provider}")
 
     def recommend_duplicates(self, groups_json: str) -> dict:
         try:
@@ -123,10 +136,10 @@ class Recommender:
                 "message": "Invalid JSON!",
             }
         except requests.RequestException as e:
-            logger.error(f"Ollama API request error: {e}")
+            logger.error("LLM API request error for provider %s: %s", self.provider, e)
             return {
                 "results": [],
-                "message": "Error while communicating with the Ollama API!",
+                "message": "Error while communicating with the LLM API!",
             }
         except Exception as e:
             logger.error(f"Error while processing duplicates: {e}")
@@ -197,31 +210,19 @@ class Recommender:
             f"{json.dumps(compact_batch, ensure_ascii=False)}"
         )
 
-        payload = {
-            "model": self.model,
-            "messages": [{
-                "role": "user",
-                "content": prompt
-            }],
-            "think": False,
-            "reasoning": False,
-            "stream": False,
-            "format": GroupDecisions.model_json_schema(),
-            "options": {
-                "temperature": 0.1,
-                "top_p": 0.8,
-                "repeat_penalty": 1.1
-            }
-        }
+        payload = self._build_payload(prompt)
+        request_url = self._build_request_url()
+        request_headers = self._build_request_headers()
 
         logger.info(
-            "LLM request batch=%s size=%s url=%s payload=%s",
+            "LLM request batch=%s size=%s provider=%s url=%s payload=%s",
             batch_index,
             len(batch),
-            self.api_url,
+            self.provider,
+            request_url,
             json.dumps(payload, ensure_ascii=False),
         )
-        response = requests.post(self.api_url, json=payload)
+        response = requests.post(request_url, json=payload, headers=request_headers)
         response.raise_for_status()
         logger.info(
             "LLM raw response batch=%s status=%s body=%s",
@@ -231,15 +232,7 @@ class Recommender:
         )
         data = response.json()
 
-        content = None
-        if "message" in data and "content" in data["message"]:
-            content = data["message"]["content"]
-        elif "completion" in data:
-            content = data["completion"]
-        elif "choices" in data and len(data["choices"]) > 0:
-            choice = data["choices"][0]
-            if "message" in choice and "content" in choice["message"]:
-                content = choice["message"]["content"]
+        content = self._extract_content(data)
 
         logger.info("LLM parsed content batch=%s: %s", batch_index, content)
 
@@ -261,6 +254,86 @@ class Recommender:
         except ValidationError as ve:
             logger.error("Validation error for batch %s: %s", batch_index, ve)
             return None
+
+    def _build_payload(self, prompt: str) -> dict[str, Any]:
+        if self.provider == "gemini":
+            return {
+                "contents": [
+                    {
+                        "role": "user",
+                        "parts": [{"text": prompt}],
+                    }
+                ],
+                "generationConfig": {
+                    "temperature": 0.1,
+                    "topP": 0.8,
+                    "responseMimeType": "application/json",
+                },
+            }
+
+        return {
+            "model": self.model,
+            "messages": [{
+                "role": "user",
+                "content": prompt
+            }],
+            "think": False,
+            "reasoning": False,
+            "stream": False,
+            "format": GroupDecisions.model_json_schema(),
+            "options": {
+                "temperature": 0.1,
+                "top_p": 0.8,
+                "repeat_penalty": 1.1
+            }
+        }
+
+    def _build_request_headers(self) -> dict[str, str]:
+        if self.provider == "gemini":
+            return {"Content-Type": "application/json"}
+        return {}
+
+    def _build_request_url(self) -> str:
+        if self.provider != "gemini" or not self.api_key:
+            return self.api_url
+
+        parts = urlsplit(self.api_url)
+        query = dict(parse_qsl(parts.query, keep_blank_values=True))
+        if "key" in query:
+            return self.api_url
+
+        query["key"] = self.api_key
+        return urlunsplit(parts._replace(query=urlencode(query)))
+
+    def _extract_content(self, data: dict[str, Any]) -> Optional[str]:
+        if self.provider == "gemini":
+            candidates = data.get("candidates")
+            if not isinstance(candidates, list) or not candidates:
+                return None
+
+            content = candidates[0].get("content") or {}
+            parts = content.get("parts")
+            if not isinstance(parts, list):
+                return None
+
+            text_parts = [
+                part.get("text")
+                for part in parts
+                if isinstance(part, dict) and isinstance(part.get("text"), str)
+            ]
+            if text_parts:
+                return "".join(text_parts)
+            return None
+
+        if "message" in data and "content" in data["message"]:
+            return data["message"]["content"]
+        if "completion" in data:
+            return data["completion"]
+        if "choices" in data and len(data["choices"]) > 0:
+            choice = data["choices"][0]
+            if "message" in choice and "content" in choice["message"]:
+                return choice["message"]["content"]
+        return None
 
     def _matches_input_pairs(self, input_pairs: list[dict], output_pairs: ProductDecisions) -> bool:
         expected_keys = {self._pair_key(pair) for pair in input_pairs}

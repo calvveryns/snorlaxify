@@ -79,8 +79,8 @@ class BenchmarkEvaluationTests(unittest.TestCase):
 
         vectorizer = FakeVectorizer(
             {
-                "name: Арматура №10х6000-А500С\nnormalized_name: арматура 10x6000а500с": [1.0, 0.0],
-                "name: Арматура №10х6000-А500С \nnormalized_name: арматура 10x6000а500с": [0.99, 0.01],
+                "name: Арматура №10х6000-А500С\nnormalized_name: арматура №10х6000-а500с": [1.0, 0.0],
+                "name: Арматура №10х6000-А500С \nnormalized_name: арматура №10х6000-а500с ": [0.99, 0.01],
                 "name: Sprite 0.5\nnormalized_name: sprite 0.5": [0.0, 1.0],
             }
         )

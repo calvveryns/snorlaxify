@@ -7,6 +7,7 @@ from enum import Enum
 import psycopg2
 from psycopg2.extras import Json
 from psycopg2 import sql
+from server.src.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -173,8 +174,7 @@ class SourceDatabase(DatabaseManager):
                     "typeId",
                     "typeIdentifier"
                 FROM items
-                WHERE "typeId" = 7
-                AND "deletedAt" IS NULL
+                WHERE "deletedAt" IS NULL
             """)
             rows = cursor.fetchall()
             return [
@@ -245,11 +245,11 @@ class SourceDatabase(DatabaseManager):
             FROM vector_data AS item_one
             JOIN vector_data AS item_two
                 ON item_one.id < item_two.id
-            WHERE (item_one.vector <=> item_two.vector) <= 0.15
+            WHERE (item_one.vector <=> item_two.vector) <= %s
             ORDER BY distance;
         """
         with self.get_cursor() as (cursor, conn):
-            cursor.execute(query_sql)
+            cursor.execute(query_sql, (settings.duplicate_distance_threshold,))
             rows = cursor.fetchall()
             return [
                 {

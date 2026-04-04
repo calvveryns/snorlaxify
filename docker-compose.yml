@@ -28,6 +28,7 @@ services:
       VECTORIZER_MODEL: ${VECTORIZER_MODEL}
       LLM_API_URL: ${LLM_API_URL}
       LLM_MODEL: ${LLM_MODEL}
+      DUPLICATE_DISTANCE_THRESHOLD: ${DUPLICATE_DISTANCE_THRESHOLD}
     depends_on:
       postgres:
         condition: service_healthy

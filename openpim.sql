@@ -3333,7 +3333,9 @@ INSERT INTO public.items VALUES ('example3_d_1729599335388', '1', '{"ru": "asdas
 INSERT INTO public.items VALUES ('Metalll42', '7.15.22', '{"en": "Арматура (в мотках) 16-А240С-2"}', 7, 'Metalll', 'NMAb', '{}', '', '', '', 22, 'default', 'admin', 'admin', '2024-10-30 06:34:34.922+00', '2024-10-30 06:34:34.922+00', NULL, '{}');
 INSERT INTO public.items VALUES ('info', '4', '{"ru": "Информация"}', 3, 'info', '', '{}', '', '', '', 4, 'default', 'admin', 'admin', '2024-10-22 13:24:34.217+00', '2024-10-22 13:24:34.217+00', NULL, '{}');
 INSERT INTO public.items VALUES ('Metall22', '7', '{"ru": "Материалы из металла"}', 5, 'Metall', '', '{}', '', '', '', 7, 'default', 'admin', 'admin', '2024-10-23 10:12:08.986+00', '2024-10-23 10:12:08.986+00', NULL, '{}');
+INSERT INTO public.items VALUES ('Metall22_sem_440', '440', '{"ru": "Металлические материалы"}', 5, 'Metall', '', '{}', '', '', '', 440, 'default', 'admin', 'admin', '2024-10-23 10:12:08.986+00', '2024-10-23 10:12:08.986+00', NULL, '{}');
 INSERT INTO public.items VALUES ('Pie', '7.8', '{"ru": "Трубы"}', 6, 'Category', 'Metall22', '{}', '', '', '', 8, 'default', 'admin', 'admin', '2024-10-23 10:13:01.298+00', '2024-10-23 10:13:01.298+00', NULL, '{}');
+INSERT INTO public.items VALUES ('Pie_sem_441', '7.441', '{"ru": "Трубные изделия"}', 6, 'Category', 'Metall22', '{}', '', '', '', 441, 'default', 'admin', 'admin', '2024-10-23 10:13:01.298+00', '2024-10-23 10:13:01.298+00', NULL, '{}');
 INSERT INTO public.items VALUES ('Metalll43', '7.15.23', '{"en": "Арматура (в мотках) 5,5-B240В-P(SAE1006)-УО2"}', 7, 'Metalll', 'NMAb', '{}', '', '', '', 23, 'default', 'admin', 'admin', '2024-10-30 06:34:34.942+00', '2024-10-30 06:34:34.942+00', NULL, '{}');
 INSERT INTO public.items VALUES ('Metalll44', '7.15.24', '{"en": "Арматура (в мотках) 5,5-B240В-P(SAE1008)-УО2"}', 7, 'Metalll', 'NMAb', '{}', '', '', '', 24, 'default', 'admin', 'admin', '2024-10-30 06:34:34.959+00', '2024-10-30 06:34:34.959+00', NULL, '{}');
 INSERT INTO public.items VALUES ('ldsp20', '4.5', '{"ru": "лдсп1"}', 4, 'ldsp', 'info', '{"width": 10, "length": 10}', '', '', '', 5, 'default', 'admin', 'admin', '2024-10-22 13:24:42.961+00', '2024-10-29 10:13:40.897+00', NULL, '{}');
@@ -3342,7 +3344,9 @@ INSERT INTO public.items VALUES ('new1', '4.11', '{"ru": "лдсп3"}', 4, 'ldsp
 INSERT INTO public.items VALUES ('new2', '4.12', '{"ru": "лдсп4"}', 4, 'ldsp', 'info', '{"width": 40, "length": 40}', '', '', '', 12, 'default', 'admin', 'admin', '2024-10-29 10:13:40.951+00', '2024-10-29 10:13:40.951+00', NULL, '{}');
 INSERT INTO public.items VALUES ('Board10_d_1730259309296', '2', '{"ru": "тест"}', 2, 'Board', '', '{}', '', '', '', 2, 'default', 'admin', 'admin', '2024-10-22 13:14:49.177+00', '2024-10-30 03:35:09.32+00', '2024-10-30 03:35:09.319+00', '{}');
 INSERT INTO public.items VALUES ('Metalll24_d_1730259720598', '7.8.9', '{"ru": "Труба 20х20"}', 7, 'Metalll', 'Pie', '{}', '', '', '', 9, 'default', 'admin', 'admin', '2024-10-23 11:09:08.571+00', '2024-10-30 03:42:00.606+00', '2024-10-30 03:42:00.606+00', '{}');
+INSERT INTO public.items VALUES ('Metalll24_sem_442', '7.8.442', '{"ru": "Профильная труба 20х20"}', 7, 'Metalll', 'Pie', '{}', '', '', '', 442, 'default', 'admin', 'admin', '2024-10-23 11:09:08.571+00', '2024-10-30 03:42:00.606+00', '2024-10-30 03:42:00.606+00', '{}');
 INSERT INTO public.items VALUES ('Metalll25_d_1730259723977', '7.8.10', '{"ru": "Труба 30х30"}', 7, 'Metalll', 'Pie', '{}', '', '', '', 10, 'default', 'admin', 'admin', '2024-10-23 11:10:56.343+00', '2024-10-30 03:42:03.984+00', '2024-10-30 03:42:03.984+00', '{}');
+INSERT INTO public.items VALUES ('Metalll25_sem_443', '7.8.443', '{"ru": "Профильная труба 30х30"}', 7, 'Metalll', 'Pie', '{}', '', '', '', 443, 'default', 'admin', 'admin', '2024-10-23 11:10:56.343+00', '2024-10-30 03:42:03.984+00', '2024-10-30 03:42:03.984+00', '{}');
 INSERT INTO public.items VALUES ('Metalll28', '7.8.13', '{"ru": "Арматура (в мотках) 10,0-А240С-2"}', 7, 'Metalll', 'Pie', '{}', '', '', '', 13, 'default', 'admin', 'admin', '2024-10-30 03:42:30.806+00', '2024-10-30 06:07:01.462+00', NULL, '{}');
 INSERT INTO public.items VALUES ('Board17_d_1730268864958', '3', '{"ru": "лдсп 12"}', 2, 'Board', '', '{}', '', '', '', 3, 'default', 'admin', 'admin', '2024-10-22 13:16:42.438+00', '2024-10-30 06:14:24.965+00', '2024-10-30 06:14:24.964+00', '{}');
 INSERT INTO public.items VALUES ('ldsp33', '4.14', '{"ru": "длолдодлдло"}', 4, 'ldsp', 'info', '{}', '', '', '', 14, 'default', 'admin', 'admin', '2024-10-30 06:16:30.029+00', '2024-10-30 06:16:30.029+00', NULL, '{}');
@@ -3768,6 +3772,7 @@ INSERT INTO public.items VALUES ('Metalll456', '7.15.436', '{"en": "Армату
 INSERT INTO public.items VALUES ('Metalll457', '7.15.437', '{"en": "Арматура №10х6400-Ат800(28С)"}', 7, 'Metalll', 'NMAb', '{}', '', '', '', 437, 'default', 'admin', 'admin', '2024-10-30 06:34:41.609+00', '2024-10-30 06:34:41.609+00', NULL, '{}');
 INSERT INTO public.items VALUES ('BulkMaterials38_d_1730271442968', '438', '{"ru": "вввв"}', 9, 'BulkMaterials', '', '{}', '', '', '', 438, 'default', 'admin', 'admin', '2024-10-30 06:57:07.556+00', '2024-10-30 06:57:22.974+00', '2024-10-30 06:57:22.974+00', '{}');
 INSERT INTO public.items VALUES ('BulkMaterials46_d_1730271667301', '439', '{"ru": "Сыпучие материалы"}', 9, 'BulkMaterials', '', '{}', '', '', '', 439, 'default', 'admin', 'admin', '2024-10-30 06:59:45.108+00', '2024-10-30 07:01:07.306+00', '2024-10-30 07:01:07.306+00', '{}');
+INSERT INTO public.items VALUES ('BulkMaterials46_sem_444', '444', '{"ru": "Сыпучие товарные материалы"}', 9, 'BulkMaterials', '', '{}', '', '', '', 444, 'default', 'admin', 'admin', '2024-10-30 06:59:45.108+00', '2024-10-30 07:01:07.306+00', '2024-10-30 07:01:07.306+00', '{}');
 
 
 --
@@ -3978,7 +3983,7 @@ SELECT pg_catalog.setval('public."itemRelations_id_seq"', 1, false);
 -- Name: items_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
 --
 
-SELECT pg_catalog.setval('public.items_id_seq', 439, true);
+SELECT pg_catalog.setval('public.items_id_seq', 444, true);
 
 
 --
@@ -6046,4 +6051,3 @@ SELECT pg_catalog.setval('_timescaledb_config.bgw_job_id_seq', 1000, false);
 --
 -- PostgreSQL database cluster dump complete
 --
-

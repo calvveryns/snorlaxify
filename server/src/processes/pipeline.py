@@ -1,7 +1,9 @@
 import json
 import logging
+import re
 import threading
 import time
+from typing import Optional
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 from server.src.config import settings
@@ -12,13 +14,25 @@ from server.src.utils.recommender import Recommender
 logger = logging.getLogger(__name__)
 
 
+def normalize_identifier_name(name: Optional[str]) -> str:
+    if not name:
+        return ""
+    normalized = name.lower()
+    normalized = normalized.replace("№", "")
+    normalized = re.sub(r"[()]", " ", normalized)
+    normalized = re.sub(r"[-_/]", " ", normalized)
+    normalized = re.sub(r"(?<=\d)\s*[xх]\s*(?=\d)", "x", normalized)
+    normalized = re.sub(r"(?<=\d)\s+(?=[a-zа-я])", "", normalized)
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized.strip()
+
+
 def build_vectorizer_input(identifier: dict) -> str:
-    fields = [
-        ("name", identifier.get("name")),
-        ("type_id", identifier.get("type_id")),
-        ("type_identifier", identifier.get("type_identifier")),
-        ("path", identifier.get("path")),
-    ]
+    name = identifier.get("name")
+    normalized_name = normalize_identifier_name(name)
+    fields = [("name", name)]
+    if normalized_name and normalized_name != name:
+        fields.append(("normalized_name", normalized_name))
     return "\n".join(f"{label}: {value}" for label, value in fields if value not in (None, ""))
 
 

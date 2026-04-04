@@ -104,6 +104,15 @@
   gap: 24px;
 }
 
+.right-panel {
+  position: sticky;
+  top: 24px;
+  align-self: start;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
 .section {
   background: white;
   padding: 20px;
@@ -313,6 +322,13 @@ input[pInputText] {
 
   .content-wrapper {
     grid-template-columns: 1fr;
+  }
+
+  .right-panel {
+    position: static;
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
   }
 
   .facts-grid {

@@ -1,5 +1,8 @@
 import json
 import logging
+import heapq
+import os
+import re
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional
 from enum import Enum
@@ -50,6 +53,199 @@ class DatabaseManager:
 
 
 class SourceDatabase(DatabaseManager):
+    @staticmethod
+    def _normalize_group_title(title: Optional[str]) -> str:
+        if not title:
+            return ""
+
+        normalized = title.lower()
+        normalized = normalized.replace("№", "")
+        normalized = re.sub(r"[()]", " ", normalized)
+        normalized = re.sub(r"[-_/]", " ", normalized)
+        normalized = re.sub(r"(?<=\d)\s*[xх]\s*(?=\d)", "x", normalized)
+        normalized = re.sub(r"(?<=\d)\s+(?=[a-zа-я])", "", normalized)
+        normalized = re.sub(r"[^\w\s]", " ", normalized)
+        normalized = re.sub(r"\s+", " ", normalized)
+        return normalized.strip()
+
+    @classmethod
+    def _extract_numeric_tokens(cls, title: Optional[str]) -> set[str]:
+        normalized = cls._normalize_group_title(title)
+        return set(re.findall(r"\d+(?:[.,]\d+)?", normalized))
+
+    @classmethod
+    def _extract_model_tokens(cls, title: Optional[str]) -> set[str]:
+        normalized = cls._normalize_group_title(title)
+        return {
+            token
+            for token in normalized.split()
+            if re.search(r"[a-zа-я]", token) and re.search(r"\d", token)
+        }
+
+    @classmethod
+    def _should_link_titles(cls, title_one: Optional[str], title_two: Optional[str]) -> bool:
+        normalized_one = cls._normalize_group_title(title_one)
+        normalized_two = cls._normalize_group_title(title_two)
+
+        if not normalized_one or not normalized_two:
+            return True
+
+        if normalized_one == normalized_two:
+            return True
+
+        numbers_one = cls._extract_numeric_tokens(title_one)
+        numbers_two = cls._extract_numeric_tokens(title_two)
+        if numbers_one and numbers_two and numbers_one != numbers_two:
+            return False
+
+        model_tokens_one = cls._extract_model_tokens(title_one)
+        model_tokens_two = cls._extract_model_tokens(title_two)
+        if model_tokens_one and model_tokens_two and model_tokens_one != model_tokens_two:
+            return False
+
+        return True
+
+    @staticmethod
+    def _select_group_anchor(
+        component: set[int],
+        items_by_vector_id: Dict[int, Dict[str, Any]],
+        edge_distances: Dict[int, Dict[int, float]],
+    ) -> int:
+        def average_distance(vector_id: int) -> float:
+            shortest_paths = SourceDatabase._shortest_path_distances(vector_id, component, edge_distances)
+            distances = [
+                shortest_paths[other_id]
+                for other_id in component
+                if other_id != vector_id and other_id in shortest_paths
+            ]
+            if not distances:
+                return float("inf")
+            return sum(distances) / len(distances)
+
+        return min(
+            component,
+            key=lambda vector_id: (
+                average_distance(vector_id),
+                -len(items_by_vector_id[vector_id]["title"] or ""),
+                vector_id,
+            ),
+        )
+
+    @staticmethod
+    def _shortest_path_distances(
+        anchor_vector_id: int,
+        component: set[int],
+        edge_distances: Dict[int, Dict[int, float]],
+    ) -> Dict[int, float]:
+        distances: Dict[int, float] = {anchor_vector_id: 0.0}
+        queue: list[tuple[float, int]] = [(0.0, anchor_vector_id)]
+
+        while queue:
+            current_distance, current_vector_id = heapq.heappop(queue)
+            if current_distance > distances.get(current_vector_id, float("inf")):
+                continue
+
+            for neighbour_id, edge_distance in edge_distances.get(current_vector_id, {}).items():
+                if neighbour_id not in component:
+                    continue
+
+                candidate_distance = current_distance + edge_distance
+                if candidate_distance < distances.get(neighbour_id, float("inf")):
+                    distances[neighbour_id] = candidate_distance
+                    heapq.heappush(queue, (candidate_distance, neighbour_id))
+
+        return distances
+
+    @classmethod
+    def _build_groups_from_neighbors(
+        cls,
+        rows: List[tuple[int, int, str]],
+        neighbour_rows: Dict[int, List[tuple[int, int, str, float]]],
+    ) -> List[Dict[str, Any]]:
+        items_by_vector_id = {
+            row[0]: {
+                "item_id": row[1],
+                "title": row[2],
+            }
+            for row in rows
+        }
+        adjacency: Dict[int, set[int]] = {row[0]: set() for row in rows}
+        edge_distances: Dict[int, Dict[int, float]] = {row[0]: {} for row in rows}
+
+        for base_vector_id, neighbours in neighbour_rows.items():
+            base_item = items_by_vector_id.get(base_vector_id)
+            if not base_item:
+                continue
+
+            for neighbour_vector_id, neighbour_item_id, neighbour_title, distance in neighbours:
+                neighbour_item = items_by_vector_id.get(neighbour_vector_id)
+                if not neighbour_item:
+                    continue
+
+                if not cls._should_link_titles(base_item["title"], neighbour_title):
+                    continue
+
+                adjacency[base_vector_id].add(neighbour_vector_id)
+                adjacency[neighbour_vector_id].add(base_vector_id)
+
+                existing_distance = edge_distances[base_vector_id].get(neighbour_vector_id)
+                if existing_distance is None or distance < existing_distance:
+                    edge_distances[base_vector_id][neighbour_vector_id] = distance
+                    edge_distances[neighbour_vector_id][base_vector_id] = distance
+
+        groups: List[Dict[str, Any]] = []
+        visited: set[int] = set()
+
+        for vector_id, item_id, _title in rows:
+            if vector_id in visited:
+                continue
+
+            stack = [vector_id]
+            component: set[int] = set()
+
+            while stack:
+                current_vector_id = stack.pop()
+                if current_vector_id in visited:
+                    continue
+                visited.add(current_vector_id)
+                component.add(current_vector_id)
+                stack.extend(neighbour_id for neighbour_id in adjacency[current_vector_id] if neighbour_id not in visited)
+
+            if len(component) < 2:
+                continue
+
+            anchor_vector_id = cls._select_group_anchor(component, items_by_vector_id, edge_distances)
+            anchor_item = items_by_vector_id[anchor_vector_id]
+            path_distances = cls._shortest_path_distances(anchor_vector_id, component, edge_distances)
+            ordered_component = [anchor_vector_id] + sorted(
+                (member_id for member_id in component if member_id != anchor_vector_id),
+                key=lambda member_id: (
+                    path_distances.get(member_id, float("inf")),
+                    items_by_vector_id[member_id]["item_id"],
+                ),
+            )
+
+            group_items = []
+            for member_id in ordered_component:
+                member = items_by_vector_id[member_id]
+                group_items.append(
+                    {
+                        "item_id": member["item_id"],
+                        "title": member["title"],
+                        "distance": float(path_distances.get(member_id, 0.0 if member_id == anchor_vector_id else float("inf"))),
+                        "is_anchor": member_id == anchor_vector_id,
+                    }
+                )
+
+            groups.append(
+                {
+                    "anchor_item_id": anchor_item["item_id"],
+                    "items": group_items,
+                }
+            )
+
+        return groups
+
     def reassign_item_references(self, cursor, source_item_id: int, target_item_id: int):
         if source_item_id == target_item_id:
             return
@@ -393,86 +589,33 @@ class SourceDatabase(DatabaseManager):
                 base.vector <=> other.vector AS distance
             FROM vector_data AS base
             JOIN vector_data AS other
-                ON other.id = ANY(%s)
+                ON other.id <> base.id
             WHERE base.id = %s
                 AND (base.vector <=> other.vector) < %s
             ORDER BY distance, other.id
+            LIMIT %s
         """
         with self.get_cursor() as (cursor, conn):
             cursor.execute(query_items_sql)
             rows = cursor.fetchall()
+            neighbour_rows: Dict[int, List[tuple[int, int, str, float]]] = {}
+            top_k = max(1, int(os.getenv("DUPLICATE_GROUP_TOP_K", "10")))
 
-            ordered_vector_ids = [row[0] for row in rows]
-            remaining_items = {
-                row[0]: {
-                    "item_id": row[1],
-                    "title": row[2],
-                }
-                for row in rows
-            }
-            groups: List[Dict[str, Any]] = []
-
-            while ordered_vector_ids:
-                base_vector_id = ordered_vector_ids.pop(0)
-                base_item = remaining_items.pop(base_vector_id, None)
-                if not base_item:
-                    continue
-
-                candidate_vector_ids = list(remaining_items.keys())
-                if not candidate_vector_ids:
-                    continue
-
+            for base_vector_id, _item_id, _identifier in rows:
                 cursor.execute(
                     query_group_sql,
-                    (candidate_vector_ids, base_vector_id, settings.duplicate_distance_threshold),
+                    (
+                        base_vector_id,
+                        settings.duplicate_distance_threshold,
+                        top_k,
+                    ),
                 )
-                matched_rows = cursor.fetchall()
-                if not matched_rows:
-                    continue
-
-                group_items = [
-                    {
-                        "item_id": base_item["item_id"],
-                        "title": base_item["title"],
-                        "distance": 0.0,
-                        "is_anchor": True,
-                    }
+                neighbour_rows[base_vector_id] = [
+                    (row[0], row[1], row[2], float(row[3]))
+                    for row in cursor.fetchall()
                 ]
-                matched_vector_ids: List[int] = []
 
-                for row in matched_rows:
-                    matched_vector_id = row[0]
-                    matched_item = remaining_items.pop(matched_vector_id, None)
-                    if not matched_item:
-                        continue
-
-                    matched_vector_ids.append(matched_vector_id)
-                    group_items.append(
-                        {
-                            "item_id": row[1],
-                            "title": row[2],
-                            "distance": float(row[3]),
-                            "is_anchor": False,
-                        }
-                    )
-
-                if len(group_items) > 1:
-                    groups.append(
-                        {
-                            "anchor_item_id": base_item["item_id"],
-                            "items": group_items,
-                        }
-                    )
-
-                if matched_vector_ids:
-                    matched_vector_ids_set = set(matched_vector_ids)
-                    ordered_vector_ids = [
-                        vector_id
-                        for vector_id in ordered_vector_ids
-                        if vector_id not in matched_vector_ids_set
-                    ]
-
-            return groups
+            return self._build_groups_from_neighbors(rows, neighbour_rows)
 
     def create_pipeline_tables(self):
         create_archive_table = """

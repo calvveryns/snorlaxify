@@ -9,10 +9,13 @@ from typing import Literal, Optional
 logger = logging.getLogger(__name__)
 
 
-class ProductPair(BaseModel):
+class CandidatePair(BaseModel):
     title_one: str
     title_two: str
     distance: float
+
+
+class ProductPair(CandidatePair):
     duplicate_likelihood: Literal["high", "medium", "low"]
     suggested_name: Optional[str]
 
@@ -21,16 +24,30 @@ class ProductPairs(BaseModel):
     results: list[ProductPair]
 
 
+class ResolvePair(BaseModel):
+    title_one: str
+    title_two: str
+    action: Literal["merge", "ignore"]
+    suggested_name: Optional[str] = None
+
+
+class ResolveRequest(BaseModel):
+    pairs: list[ResolvePair]
+
+
 class Recommender:
     def __init__(self, api_url: str, model: str):
         self.api_url = api_url
         self.model = model
 
-    def recommend_duplicates(self, pairs_json: str) -> ProductPairs | str:
+    def recommend_duplicates(self, pairs_json: str) -> dict:
         try:
             pairs = json.loads(pairs_json)
             if not pairs:
-                return "No elements for analysis"
+                return {
+                    "results": [],
+                    "message": "No elements for analysis",
+                }
 
             prompt = (
                 "Ты аналитик по поиску дубликатов товарных карточек.\n\n"
@@ -87,17 +104,29 @@ class Recommender:
 
             try:
                 validated = ProductPairs.model_validate_json(content)
-                return validated.model_dump_json()
+                return validated.model_dump(mode="json")
             except ValidationError as ve:
                 logger.error(f"Validation error: {ve}")
-                return "The model response does not match the expected format!"
+                return {
+                    "results": [],
+                    "message": "The model response does not match the expected format!",
+                }
 
         except json.JSONDecodeError as e:
             logger.error(f"Parsing error: {e}")
-            return "Invalid JSON!"
+            return {
+                "results": [],
+                "message": "Invalid JSON!",
+            }
         except requests.RequestException as e:
             logger.error(f"Ollama API request error: {e}")
-            return "Error while communicating with the Ollama API!"
+            return {
+                "results": [],
+                "message": "Error while communicating with the Ollama API!",
+            }
         except Exception as e:
             logger.error(f"Error while processing duplicates: {e}")
-            return "Error while analyzing duplicates!"
+            return {
+                "results": [],
+                "message": "Error while analyzing duplicates!",
+            }

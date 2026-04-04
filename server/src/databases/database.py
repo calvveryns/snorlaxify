@@ -48,6 +48,37 @@ class DatabaseManager:
 
 
 class SourceDatabase(DatabaseManager):
+    @staticmethod
+    def normalize_pipeline_result(recommendations: Any) -> Dict[str, Any]:
+        if recommendations is None:
+            return {"results": []}
+
+        if isinstance(recommendations, str):
+            try:
+                recommendations = json.loads(recommendations)
+            except json.JSONDecodeError:
+                return {"results": [], "message": recommendations}
+
+        if isinstance(recommendations, list):
+            return {"results": recommendations}
+
+        if isinstance(recommendations, dict):
+            results = recommendations.get("results")
+            message = recommendations.get("message")
+            if isinstance(results, list):
+                payload: Dict[str, Any] = {"results": results}
+                if message:
+                    payload["message"] = message
+                return payload
+
+            if all(key in recommendations for key in ("title_one", "title_two", "distance")):
+                return {"results": [recommendations]}
+
+            if message:
+                return {"results": [], "message": message}
+
+        return {"results": [], "message": "Unsupported recommendations payload"}
+
     def get_identifiers(self) -> List[str]:
         with self.get_cursor() as (cursor, conn):
             cursor.execute("""
@@ -252,21 +283,8 @@ class SourceDatabase(DatabaseManager):
                 for row in rows
             ]
 
-    @staticmethod
-    def _to_json_payload(recommendations: Any) -> Any:
-        if recommendations is None:
-            return None
-        if isinstance(recommendations, (dict, list)):
-            return recommendations
-        if isinstance(recommendations, str):
-            try:
-                return json.loads(recommendations)
-            except json.JSONDecodeError:
-                return {"message": recommendations}
-        return {"value": recommendations}
-
     def save_pipeline_result(self, task_id: str, recommendations: Any, error: Optional[str] = None):
-        payload = self._to_json_payload(recommendations)
+        payload = self.normalize_pipeline_result(recommendations)
         insert_sql = """
             INSERT INTO pipeline_results (task_id, recommendations, error, updated_at)
             VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
@@ -293,7 +311,7 @@ class SourceDatabase(DatabaseManager):
                 cursor.execute(select_sql, (task_id,))
                 row = cursor.fetchone()
                 if row and row[0]:
-                    return row[0]
+                    return self.normalize_pipeline_result(row[0])
                 return None
         except Exception as e:
             logger.error(f"Error getting pipeline result for task {task_id}: {e}")
@@ -309,19 +327,24 @@ class SourceDatabase(DatabaseManager):
             for pair in pairs_to_resolve:
                 title_one = pair.get("title_one")
                 title_two = pair.get("title_two")
-                suggest_name = pair.get("suggest_name")
+                suggested_name = pair.get("suggested_name") or pair.get("suggest_name")
+                action = pair.get("action", "merge")
 
                 if not title_one or not title_two:
                     continue
 
-                if suggest_name:
+                if action == "ignore":
+                    processed_count += 1
+                    continue
+
+                if suggested_name:
                     update_name_sql = """
                         UPDATE items
                         SET name = jsonb_set(name, '{en}', to_jsonb(%s::text))
                         WHERE (name::json->>'en') = %s
                         AND "deletedAt" IS NULL
                     """
-                    cursor.execute(update_name_sql, (suggest_name, title_one))
+                    cursor.execute(update_name_sql, (suggested_name, title_one))
 
                 delete_sql = """
                     UPDATE items
@@ -330,14 +353,14 @@ class SourceDatabase(DatabaseManager):
                     AND "typeId" = 7
                     AND "deletedAt" IS NULL
                 """
-                cursor.execute(delete_sql, title_two)
+                cursor.execute(delete_sql, (title_two,))
 
                 if cursor.rowcount > 0:
                     vector_delete_sql = """
                         DELETE FROM vector_data
                         WHERE identifier = %s
                     """
-                    cursor.execute(vector_delete_sql, title_two)
+                    cursor.execute(vector_delete_sql, (title_two,))
                     processed_count += 1
 
             conn.commit()

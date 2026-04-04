@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from server.src.config import settings
 from server.src.databases import SourceDatabase
 from server.src.processes.pipeline import pipeline, get_pipeline_controller, remove_pipeline_controller
-from server.src.utils.recommender import ProductPair
+from server.src.utils.recommender import ProductPairs, ResolveRequest
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +54,16 @@ class TaskStatus(BaseModel):
     error: Optional[str]
 
 
+class PipelineResultResponse(BaseModel):
+    task_id: str
+    status: str
+    recommendations: ProductPairs
+
+
+class ResolveResultResponse(PipelineResponse):
+    resolved_count: int
+
+
 def run_pipeline_task(task_id: str, start_from_step: int = 0):
     source_db = SourceDatabase(settings.db_source_url)
     try:
@@ -67,6 +77,10 @@ def run_pipeline_task(task_id: str, start_from_step: int = 0):
         with _threads_lock:
             _pipeline_threads.pop(task_id, None)
         remove_pipeline_controller(task_id)
+
+
+def _get_normalized_recommendations(source_db: SourceDatabase, task_id: str) -> Dict[str, Any]:
+    return source_db.get_pipeline_final_result(task_id) or {"results": []}
 
 
 @router.post("/pipeline/start", response_model=PipelineResponse)
@@ -94,9 +108,10 @@ async def get_pipeline_status(source_db: SourceDatabase = Depends(get_source_db)
 
     tasks = []
     for task in all_tasks:
-        recommendations = source_db.get_pipeline_final_result(task["task_id"])
+        recommendations = _get_normalized_recommendations(source_db, task["task_id"])
         tasks.append({
             "uuid": task["task_id"],
+            "task_id": task["task_id"],
             "status": task["status"],
             "started_at": task["started_at"],
             "completed_at": task["completed_at"],
@@ -121,7 +136,7 @@ async def get_task_status(task_id: str, source_db: SourceDatabase = Depends(get_
             detail=f"Task {task_id} not found"
         )
 
-    recommendations = source_db.get_pipeline_final_result(task_id)
+    recommendations = _get_normalized_recommendations(source_db, task_id)
 
     return TaskStatus(
         task_id=task_id,
@@ -133,6 +148,24 @@ async def get_task_status(task_id: str, source_db: SourceDatabase = Depends(get_
         current_step=task["current_step"],
         total_steps=task["total_steps"],
         error=task["error"]
+    )
+
+
+@router.get("/pipeline/{task_id}/result", response_model=PipelineResultResponse)
+async def get_task_result(task_id: str, source_db: SourceDatabase = Depends(get_source_db)):
+    task = source_db.get_pipeline_task(task_id)
+    if not task:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Task {task_id} not found"
+        )
+
+    recommendations = _get_normalized_recommendations(source_db, task_id)
+
+    return PipelineResultResponse(
+        task_id=task_id,
+        status=task["status"],
+        recommendations=ProductPairs.model_validate(recommendations),
     )
 
 
@@ -223,8 +256,12 @@ async def delete_pipeline(task_id: str, source_db: SourceDatabase = Depends(get_
     )
 
 
-@router.post("/pipeline/{task_id}/resolve", response_model=PipelineResponse)
-async def resolve_duplicates(task_id: str, pairs_to_resolve: List[ProductPair], source_db: SourceDatabase = Depends(get_source_db)):
+@router.post("/pipeline/{task_id}/resolve", response_model=ResolveResultResponse)
+async def resolve_duplicates(
+    task_id: str,
+    request: ResolveRequest,
+    source_db: SourceDatabase = Depends(get_source_db)
+):
     task = source_db.get_pipeline_task(task_id)
     if not task:
         raise HTTPException(
@@ -238,20 +275,20 @@ async def resolve_duplicates(task_id: str, pairs_to_resolve: List[ProductPair], 
             detail=f"Task {task_id} is not completed. Current status: {task['status']}"
         )
 
-    recommendations = source_db.get_pipeline_final_result(task_id)
-    if not recommendations:
+    recommendations = _get_normalized_recommendations(source_db, task_id)
+    if not recommendations.get("results"):
         raise HTTPException(
             status_code=404,
             detail=f"No recommendations found for task {task_id}"
         )
 
     resolved_count = source_db.resolve_pipeline_result(
-        [pair.dict() for pair in pairs_to_resolve]
+        [pair.model_dump(mode="json") for pair in request.pairs]
     )
 
-    return PipelineResponse(
+    return ResolveResultResponse(
         status="resolved",
         message=f"Resolved {resolved_count} selected duplicate pairs for task {task_id}",
         task_id=task_id,
+        resolved_count=resolved_count,
     )
-

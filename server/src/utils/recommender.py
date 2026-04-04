@@ -5,7 +5,7 @@ import logging
 from typing import Literal, Optional
 
 import requests
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +59,7 @@ class ProductGroups(BaseModel):
 
 
 class GroupDecision(BaseModel):
-    anchor_item_id: int
-    duplicate_item_ids: list[int]
+    model_config = ConfigDict(extra="forbid")
     suggested_name: Optional[str]
 
 
@@ -158,13 +157,27 @@ class Recommender:
     def _chunk_pairs(pairs: list[dict], batch_size: int) -> list[list[dict]]:
         return [pairs[i:i + batch_size] for i in range(0, len(pairs), batch_size)]
 
+    @staticmethod
+    def _fallback_group_decisions(batch: list[dict]) -> GroupDecisions:
+        return GroupDecisions.model_validate(
+            {
+                "results": [
+                    {
+                        "suggested_name": next(
+                            (item.get("title") for item in group["items"] if item.get("is_anchor")),
+                            group["items"][0].get("title") if group.get("items") else None,
+                        ),
+                    }
+                    for group in batch
+                ]
+            }
+        )
+
     def _request_batch(self, batch_index: int, batch: list[dict]) -> Optional[GroupDecisions]:
         compact_batch = [
             {
-                "anchor_item_id": group["anchor_item_id"],
                 "items": [
                     {
-                        "item_id": item["item_id"],
                         "title": item["title"],
                         "is_anchor": item["is_anchor"],
                     }
@@ -178,8 +191,9 @@ class Recommender:
             "Во всех группах первый элемент с is_anchor=true является основной записью.\n"
             "Если все элементы группы описывают один и тот же товар с разницей только в написании, верни suggested_name с нормализованным названием.\n"
             "Если внутри группы есть товары с разным смыслом, верни suggested_name = null.\n"
-            "Верни JSON только для переданных групп. Не пропускай группы и не добавляй новые.\n"
-            "duplicate_item_ids должны содержать все item_id элементов группы, кроме anchor_item_id, и в том же порядке.\n\n"
+            "Верни JSON только для переданных групп, строго в том же порядке.\n"
+            "Для каждой группы верни только одно поле: suggested_name.\n"
+            "Не возвращай id, item_id, anchor_item_id, duplicate_item_ids, title, comments или любые другие поля.\n\n"
             f"{json.dumps(compact_batch, ensure_ascii=False)}"
         )
 
@@ -235,9 +249,14 @@ class Recommender:
 
         try:
             validated = GroupDecisions.model_validate_json(content)
-            if not self._matches_input_groups(batch, validated):
-                logger.error("LLM returned groups that do not match the candidate input for batch %s", batch_index)
-                return None
+            if len(validated.results) != len(batch):
+                logger.error(
+                    "LLM returned unexpected number of results for batch %s: expected=%s actual=%s",
+                    batch_index,
+                    len(batch),
+                    len(validated.results),
+                )
+                return self._fallback_group_decisions(batch)
             return validated
         except ValidationError as ve:
             logger.error("Validation error for batch %s: %s", batch_index, ve)
@@ -248,33 +267,11 @@ class Recommender:
         actual_keys = {self._pair_key(pair.model_dump(mode="json")) for pair in output_pairs.results}
         return len(output_pairs.results) == len(input_pairs) and actual_keys == expected_keys
 
-    def _matches_input_groups(self, input_groups: list[dict], output_groups: GroupDecisions) -> bool:
-        expected_keys = {self._group_key(group) for group in input_groups}
-        actual_keys = {
-            (group.anchor_item_id, tuple(group.duplicate_item_ids))
-            for group in output_groups.results
-        }
-        return len(output_groups.results) == len(input_groups) and actual_keys == expected_keys
-
     @staticmethod
     def _merge_batch_results(batch: list[dict], decisions: GroupDecisions) -> list[dict]:
-        decisions_map = {
-            (decision.anchor_item_id, tuple(decision.duplicate_item_ids)): decision
-            for decision in decisions.results
-        }
         merged = []
-        for group in batch:
-            decision = decisions_map.get(
-                (
-                    group["anchor_item_id"],
-                    tuple(
-                        item["item_id"]
-                        for item in group["items"]
-                        if not item.get("is_anchor")
-                    ),
-                )
-            )
-            suggested_name = decision.suggested_name if decision else None
+        for group, decision in zip(batch, decisions.results):
+            suggested_name = decision.suggested_name
             merged.append(
                 {
                     **group,

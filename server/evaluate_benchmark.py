@@ -1,5 +1,6 @@
 import argparse
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -11,7 +12,7 @@ from server.src.evaluation import evaluate_benchmark_dataset, load_benchmark_dat
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run deduplication benchmark on a labeled dataset")
+    parser = argparse.ArgumentParser(description="Run candidate-stage deduplication benchmark on a labeled dataset")
     parser.add_argument("dataset", help="Path to benchmark dataset JSON")
     parser.add_argument(
         "--distance-threshold",
@@ -31,21 +32,20 @@ def main():
         help="Override vectorizer API URL for local benchmark runs",
     )
     parser.add_argument(
-        "--llm-url",
-        default=None,
-        help="Override LLM API URL for local benchmark runs",
-    )
-    parser.add_argument(
         "--vectorizer-model",
         default=None,
         help="Override vectorizer model for local benchmark runs",
     )
     parser.add_argument(
-        "--llm-model",
-        default=None,
-        help="Override LLM model for local benchmark runs",
+        "--verbose",
+        action="store_true",
+        help="Enable verbose benchmark logging",
     )
     args = parser.parse_args()
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
 
     dataset = load_benchmark_dataset(args.dataset)
     result = evaluate_benchmark_dataset(
@@ -55,8 +55,6 @@ def main():
         top_k=args.top_k,
         vectorizer_api_url=args.vectorizer_url,
         vectorizer_model=args.vectorizer_model,
-        llm_api_url=args.llm_url,
-        llm_model=args.llm_model,
     )
     print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
 

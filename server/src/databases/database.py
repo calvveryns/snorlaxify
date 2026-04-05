@@ -182,8 +182,9 @@ class SourceDatabase(DatabaseManager):
                 if not neighbour_item:
                     continue
 
-                if not cls._should_link_titles(base_item["title"], neighbour_title):
-                    continue
+                  # Temporarily disabled to evaluate pure embedding-based candidate generation.
+                  # if not cls._should_link_titles(base_item["title"], neighbour_title):
+                  #     continue
 
                 adjacency[base_vector_id].add(neighbour_vector_id)
                 adjacency[neighbour_vector_id].add(base_vector_id)

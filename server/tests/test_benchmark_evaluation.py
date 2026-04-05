@@ -11,27 +11,6 @@ class FakeVectorizer:
         return self.vectors[text]
 
 
-class FakeRecommender:
-    def recommend_duplicates(self, groups_json: str) -> dict:
-        import json
-
-        groups = json.loads(groups_json)
-        results = []
-        for group in groups:
-            titles = [item["title"] for item in group["items"]]
-            is_duplicate = any("Арматура №10х6000-А500С" in title for title in titles) and any(
-                "Арматура №10х6000-А500С " in title for title in titles
-            )
-            results.append(
-                {
-                    **group,
-                    "duplicate_likelihood": "high" if is_duplicate else "low",
-                    "suggested_name": "Арматура №10х6000-А500С" if is_duplicate else None,
-                }
-            )
-        return {"results": results}
-
-
 class BenchmarkEvaluationTests(unittest.TestCase):
     def test_adapt_service_url_for_local_run_rewrites_docker_hostname(self):
         self.assertEqual(
@@ -39,7 +18,7 @@ class BenchmarkEvaluationTests(unittest.TestCase):
             "http://localhost:11434/api/embed",
         )
 
-    def test_evaluate_benchmark_dataset_runs_pipeline_and_counts_metrics(self):
+    def test_evaluate_benchmark_dataset_counts_candidate_stage_metrics(self):
         dataset = {
             "items": [
                 {
@@ -79,30 +58,23 @@ class BenchmarkEvaluationTests(unittest.TestCase):
 
         vectorizer = FakeVectorizer(
             {
-                "name: Арматура №10х6000-А500С\nnormalized_name: арматура №10х6000-а500с": [1.0, 0.0],
-                "name: Арматура №10х6000-А500С \nnormalized_name: арматура №10х6000-а500с ": [0.99, 0.01],
-                "name: Sprite 0.5\nnormalized_name: sprite 0.5": [0.0, 1.0],
+                "name: Арматура №10х6000-А500С": [1.0, 0.0],
+                "name: Арматура №10х6000-А500С ": [0.99, 0.01],
+                "name: Sprite 0.5": [0.0, 1.0],
             }
         )
-        recommender = FakeRecommender()
 
         result = evaluate_benchmark_dataset(
             dataset,
             vectorizer=vectorizer,
-            recommender=recommender,
             distance_threshold=0.05,
             top_k=5,
         )
 
-        self.assertEqual(result.items_total, 3)
-        self.assertEqual(result.labeled_pairs_total, 3)
-        self.assertEqual(result.candidate_groups_total, 1)
-        self.assertEqual(result.predicted_duplicate_groups_total, 1)
-        self.assertEqual(result.metrics["pair_precision"], 1.0)
-        self.assertEqual(result.metrics["pair_recall"], 1.0)
-        self.assertEqual(result.metrics["pair_f1"], 1.0)
-        self.assertEqual(result.metrics["false_merge_rate"], 0.0)
-        self.assertEqual(result.metrics["coverage"], 1.0)
+        self.assertEqual(result.dataset_path, "<in-memory>")
+        self.assertEqual(result.precision, 1.0)
+        self.assertEqual(result.recall, 1.0)
+        self.assertEqual(result.f1, 1.0)
 
 
 if __name__ == "__main__":

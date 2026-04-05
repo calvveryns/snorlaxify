@@ -1,23 +1,25 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable, Optional, Protocol
+from typing import Any, Optional, Protocol
 from urllib.parse import urlsplit, urlunsplit
 
 from server.src.databases import SourceDatabase
 from server.src.utils.dedup_metrics import (
+    PairQualityMetrics,
     build_gold_pair_set_from_labeled_dataset,
     build_pair_set_from_groups,
-    calculate_deduplication_quality_metrics,
-    calculate_pair_metrics_on_labeled_dataset,
 )
 from server.src.utils.vectorizer_input import build_vectorizer_input
+
+logger = logging.getLogger(__name__)
 
 
 class VectorizerLike(Protocol):
@@ -25,19 +27,12 @@ class VectorizerLike(Protocol):
         ...
 
 
-class RecommenderLike(Protocol):
-    def recommend_duplicates(self, groups_json: str) -> dict[str, Any]:
-        ...
-
-
 @dataclass(frozen=True)
 class BenchmarkEvaluationResult:
     dataset_path: str
-    items_total: int
-    labeled_pairs_total: int
-    candidate_groups_total: int
-    predicted_duplicate_groups_total: int
-    metrics: dict[str, Any]
+    precision: float
+    recall: float
+    f1: float
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -106,7 +101,16 @@ def _build_candidate_groups(
         base_item_id = base_identifier["item_id"]
         base_vector = embeddings_by_item_id[base_item_id]
         base_vector_id = vector_ids_by_item_id[base_item_id]
+        logger.debug(
+            "Candidate search for item_id=%s title=%r vector_dim=%s threshold=%s top_k=%s",
+            base_item_id,
+            base_identifier["name"],
+            len(base_vector),
+            distance_threshold,
+            top_k,
+        )
         neighbours: list[tuple[int, int, str, float]] = []
+        considered_distances: list[tuple[int, float]] = []
 
         for other_identifier in ordered_identifiers:
             other_item_id = other_identifier["item_id"]
@@ -114,6 +118,7 @@ def _build_candidate_groups(
                 continue
 
             distance = _cosine_distance(base_vector, embeddings_by_item_id[other_item_id])
+            considered_distances.append((other_item_id, distance))
             if distance >= distance_threshold:
                 continue
 
@@ -126,9 +131,30 @@ def _build_candidate_groups(
                 )
             )
 
+        considered_distances.sort(key=lambda item: (item[1], item[0]))
+        logger.debug(
+            "Nearest neighbours for item_id=%s: %s",
+            base_item_id,
+            [
+                {"item_id": item_id, "distance": round(distance, 6)}
+                for item_id, distance in considered_distances[: min(5, len(considered_distances))]
+            ],
+        )
         neighbour_rows[base_vector_id] = sorted(neighbours, key=lambda row: (row[3], row[0]))[:top_k]
+        logger.debug(
+            "Accepted neighbours for item_id=%s under threshold=%s: %s",
+            base_item_id,
+            distance_threshold,
+            [
+                {"item_id": row[1], "distance": round(row[3], 6), "title": row[2]}
+                for row in neighbour_rows[base_vector_id]
+            ],
+        )
 
-    return SourceDatabase._build_groups_from_neighbors(rows, neighbour_rows)
+    candidate_groups = SourceDatabase._build_groups_from_neighbors(rows, neighbour_rows)
+    logger.info("Candidate generation built %s groups", len(candidate_groups))
+    logger.debug("Candidate groups payload: %s", json.dumps(candidate_groups, ensure_ascii=False, indent=2))
+    return candidate_groups
 
 
 def load_benchmark_dataset(dataset_path: str | os.PathLike[str]) -> dict[str, Any]:
@@ -163,55 +189,67 @@ def evaluate_benchmark_dataset(
     *,
     dataset_path: str = "<in-memory>",
     vectorizer: Optional[VectorizerLike] = None,
-    recommender: Optional[RecommenderLike] = None,
     distance_threshold: Optional[float] = None,
     top_k: Optional[int] = None,
     vectorizer_api_url: Optional[str] = None,
     vectorizer_model: Optional[str] = None,
-    llm_provider: Optional[str] = None,
-    llm_api_url: Optional[str] = None,
-    llm_model: Optional[str] = None,
-    llm_api_key: Optional[str] = None,
 ) -> BenchmarkEvaluationResult:
-    if vectorizer is None or recommender is None or distance_threshold is None:
+    if vectorizer is None or distance_threshold is None:
         from server.src.config import settings
-        from server.src.utils.recommender import Recommender
         from server.src.utils.vectorizer import Vectorizer
 
         resolved_vectorizer_api_url = adapt_service_url_for_local_run(
             vectorizer_api_url or settings.vectorizer_api_url
         )
-        resolved_llm_api_url = adapt_service_url_for_local_run(
-            llm_api_url or settings.llm_api_url
-        )
         resolved_vectorizer_model = vectorizer_model or settings.vectorizer_model
-        resolved_llm_provider = llm_provider or settings.llm_provider
-        resolved_llm_model = llm_model or settings.llm_model
-        resolved_llm_api_key = llm_api_key or settings.llm_api_key
+        logger.info(
+            "Benchmark config: dataset=%s vectorizer_url=%s vectorizer_model=%s distance_threshold=%s",
+            dataset_path,
+            resolved_vectorizer_api_url,
+            resolved_vectorizer_model,
+            distance_threshold if distance_threshold is not None else settings.duplicate_distance_threshold,
+        )
 
         vectorizer = vectorizer or Vectorizer(resolved_vectorizer_api_url, resolved_vectorizer_model)
-        recommender = recommender or Recommender(
-            resolved_llm_api_url,
-            resolved_llm_model,
-            provider=resolved_llm_provider,
-            api_key=resolved_llm_api_key,
+        distance_threshold = (
+            distance_threshold if distance_threshold is not None else settings.duplicate_distance_threshold
         )
-        distance_threshold = distance_threshold if distance_threshold is not None else settings.duplicate_distance_threshold
 
     items = dataset.get("items") or []
     labeled_pairs = dataset.get("labeled_pairs") or []
     top_k = top_k if top_k is not None else max(1, int(os.getenv("DUPLICATE_GROUP_TOP_K", "10")))
+    logger.info(
+        "Loaded benchmark dataset %s: items=%s labeled_pairs=%s top_k=%s",
+        dataset_path,
+        len(items),
+        len(labeled_pairs),
+        top_k,
+    )
 
     identifiers = [
         identifier
         for identifier in (_build_identifier_from_item(item) for item in items)
         if identifier.get("name")
     ]
+    logger.info("Prepared %s identifiers with non-empty names", len(identifiers))
 
     embeddings_by_item_id: dict[int, list[float]] = {}
     for identifier in identifiers:
         vectorizer_input = build_vectorizer_input(identifier)
-        embeddings_by_item_id[identifier["item_id"]] = vectorizer.vectorize(vectorizer_input)
+        logger.debug(
+            "Vectorizing item_id=%s title=%r input=%r",
+            identifier["item_id"],
+            identifier["name"],
+            vectorizer_input,
+        )
+        embedding = vectorizer.vectorize(vectorizer_input)
+        embeddings_by_item_id[identifier["item_id"]] = embedding
+        logger.debug(
+            "Vectorized item_id=%s vector_dim=%s first_values=%s",
+            identifier["item_id"],
+            len(embedding),
+            [round(float(value), 6) for value in embedding[: min(5, len(embedding))]],
+        )
 
     candidate_groups = _build_candidate_groups(
         identifiers=identifiers,
@@ -220,36 +258,44 @@ def evaluate_benchmark_dataset(
         top_k=top_k,
     )
     candidate_pairs = build_pair_set_from_groups(candidate_groups)
-
-    recommendation_payload = recommender.recommend_duplicates(
-        json.dumps(candidate_groups, ensure_ascii=False)
-    )
-    predicted_groups = [
-        group
-        for group in recommendation_payload.get("results", [])
-        if group.get("duplicate_likelihood") == "high"
-    ]
-    predicted_pairs = build_pair_set_from_groups(predicted_groups)
     gold_pairs = build_gold_pair_set_from_labeled_dataset(labeled_pairs)
-
-    quality_report = calculate_deduplication_quality_metrics(
-        candidate_pairs=candidate_pairs,
-        predicted_duplicate_pairs=predicted_pairs,
-        gold_duplicate_pairs=gold_pairs,
+    logger.info(
+        "Candidate-only benchmark produced candidate_pairs=%s gold_pairs=%s",
+        len(candidate_pairs),
+        len(gold_pairs),
     )
-    pair_report = calculate_pair_metrics_on_labeled_dataset(
-        predicted_duplicate_pairs=predicted_pairs,
-        labeled_pairs=labeled_pairs,
+
+    item_titles = {identifier["item_id"]: identifier["name"] for identifier in identifiers}
+    gold_pair_diagnostics = []
+    for item_one_id, item_two_id in sorted(gold_pairs):
+        vector_one = embeddings_by_item_id.get(item_one_id)
+        vector_two = embeddings_by_item_id.get(item_two_id)
+        distance = None
+        if vector_one is not None and vector_two is not None:
+            distance = _cosine_distance(vector_one, vector_two)
+        gold_pair_diagnostics.append(
+            {
+                "pair": [item_one_id, item_two_id],
+                "title_one": item_titles.get(item_one_id),
+                "title_two": item_titles.get(item_two_id),
+                "distance": round(distance, 6) if distance is not None else None,
+                "is_candidate": (item_one_id, item_two_id) in candidate_pairs,
+            }
+        )
+    logger.info("Gold pair diagnostics count=%s", len(gold_pair_diagnostics))
+    logger.debug("Gold pair diagnostics: %s", json.dumps(gold_pair_diagnostics, ensure_ascii=False, indent=2))
+
+    metrics = PairQualityMetrics.from_sets(candidate_pairs, gold_pairs)
+    logger.info(
+        "Metrics summary: precision=%.4f recall=%.4f f1=%.4f",
+        metrics.precision,
+        metrics.recall,
+        metrics.f1,
     )
 
     return BenchmarkEvaluationResult(
         dataset_path=dataset_path,
-        items_total=len(items),
-        labeled_pairs_total=len(labeled_pairs),
-        candidate_groups_total=len(candidate_groups),
-        predicted_duplicate_groups_total=len(predicted_groups),
-        metrics={
-            **pair_report.to_dict(),
-            **quality_report.to_dict(),
-        },
+        precision=metrics.precision,
+        recall=metrics.recall,
+        f1=metrics.f1,
     )

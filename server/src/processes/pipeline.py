@@ -71,14 +71,23 @@ def pipeline(task_id: str, source_db: SourceDatabase, start_from_step: int = 0):
         model=settings.llm_model,
         provider=settings.llm_provider,
         api_key=settings.llm_api_key,
+        regroup_think=settings.llm_regroup_think,
+        filter_think=settings.llm_filter_think,
+        recommend_think=settings.llm_recommend_think,
     )
     controller = get_pipeline_controller(task_id)
+    candidate_groups_json = "[]"
+    regrouped_groups_json = "[]"
+    filtered_groups_json = "[]"
+    recommendations = {"results": []}
 
     steps = [
         "Setting up source database",
         "Vectorizing identifiers",
         "Committing changes",
         "Finding duplicate groups",
+        "Splitting duplicate groups with LLM",
+        "Filtering duplicate groups with LLM",
         "Requesting recommendations"
     ]
 
@@ -142,18 +151,68 @@ def pipeline(task_id: str, source_db: SourceDatabase, start_from_step: int = 0):
                     controller.wait_if_paused()
                     pbar.set_postfix_str(steps[3])
                     results = source_db.get_close_groups()
-                    results_json = json.dumps(results, indent=2)
+                    candidate_groups_json = json.dumps(results, indent=2)
                     source_db.update_pipeline_task_status(task_id, "running", current_step=3)
                     pbar.update(1)
                     start_from_step = 4
 
-                # Requesting recommendations
+                # Splitting duplicate groups with LLM
                 if start_from_step <= 4:
                     controller.wait_if_paused()
                     pbar.set_postfix_str(steps[4])
-                    recommendations = recommender.recommend_duplicates(results_json)
-                    source_db.save_pipeline_result(task_id, recommendations)
+                    if candidate_groups_json == "[]":
+                        candidate_groups_json = json.dumps(source_db.get_close_groups(), indent=2)
+                    regrouped_groups = recommender.regroup_duplicate_groups(
+                        candidate_groups_json,
+                        batch_size=settings.llm_regroup_batch_size,
+                    )
+                    regrouped_groups_json = json.dumps(regrouped_groups.get("results", []), indent=2)
                     source_db.update_pipeline_task_status(task_id, "running", current_step=4)
+                    pbar.update(1)
+                    start_from_step = 5
+
+                # Filtering duplicate groups with LLM
+                if start_from_step <= 5:
+                    controller.wait_if_paused()
+                    pbar.set_postfix_str(steps[5])
+                    if regrouped_groups_json == "[]":
+                        if candidate_groups_json == "[]":
+                            candidate_groups_json = json.dumps(source_db.get_close_groups(), indent=2)
+                        regrouped_groups = recommender.regroup_duplicate_groups(
+                            candidate_groups_json,
+                            batch_size=settings.llm_regroup_batch_size,
+                        )
+                        regrouped_groups_json = json.dumps(regrouped_groups.get("results", []), indent=2)
+                    filtered_groups = recommender.filter_duplicate_groups(
+                        regrouped_groups_json,
+                        batch_size=settings.llm_filter_batch_size,
+                    )
+                    filtered_groups_json = json.dumps(filtered_groups.get("results", []), indent=2)
+                    source_db.update_pipeline_task_status(task_id, "running", current_step=5)
+                    pbar.update(1)
+                    start_from_step = 6
+
+                # Requesting recommendations
+                if start_from_step <= 6:
+                    controller.wait_if_paused()
+                    pbar.set_postfix_str(steps[6])
+                    if filtered_groups_json == "[]":
+                        if regrouped_groups_json == "[]":
+                            if candidate_groups_json == "[]":
+                                candidate_groups_json = json.dumps(source_db.get_close_groups(), indent=2)
+                            regrouped_groups = recommender.regroup_duplicate_groups(
+                                candidate_groups_json,
+                                batch_size=settings.llm_regroup_batch_size,
+                            )
+                            regrouped_groups_json = json.dumps(regrouped_groups.get("results", []), indent=2)
+                        filtered_groups = recommender.filter_duplicate_groups(
+                            regrouped_groups_json,
+                            batch_size=settings.llm_filter_batch_size,
+                        )
+                        filtered_groups_json = json.dumps(filtered_groups.get("results", []), indent=2)
+                    recommendations = recommender.recommend_duplicates(filtered_groups_json)
+                    source_db.save_pipeline_result(task_id, recommendations)
+                    source_db.update_pipeline_task_status(task_id, "running", current_step=6)
                     pbar.update(1)
 
         logger.info(f"Pipeline completed successfully for task {task_id}")

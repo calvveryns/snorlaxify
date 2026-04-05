@@ -1,0 +1,150 @@
+<mxfile host="app.diagrams.net" modified="2026-04-05T00:00:00.000Z" agent="Codex" version="24.7.17">
+  <diagram id="duplicate-search-pipeline" name="Duplicate Search Pipeline">
+    <mxGraphModel dx="1600" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1920" pageHeight="1080" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="Пайплайн поиска дублей" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=22;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="340" height="30" as="geometry"/>
+        </mxCell>
+        <mxCell id="start" value="Старт pipeline" style="ellipse;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="60" y="90" width="160" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="load" value="Загрузить записи из items + metadata из vector_data&#xa;item_id, name, updated_at, stored hash, model" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="280" y="80" width="300" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="should" value="Нужна повторная векторизация?&#xa;Нет hash / сменилась модель / updated_at новее / input_hash изменился" style="rhombus;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="640" y="75" width="260" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="build_input" value="Собрать текст для embedding&#xa;Текущее поведение: &quot;name: {name}&quot;&#xa;path/typeId/typeIdentifier сейчас не используются" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="960" y="80" width="320" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="embed" value="Embedding API&#xa;POST /api/embeddings -> prompt&#xa;или другой endpoint -> input" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1340" y="80" width="250" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="save_vector" value="Сохранить / обновить vector_data&#xa;item_id, identifier, vector, input_hash, source_updated_at, model" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1650" y="80" width="310" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="skip_vector" value="Пропустить векторизацию" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="960" y="190" width="180" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="close_groups" value="Поиск candidate groups в БД&#xa;Для каждого вектора: соседи с cosine distance &lt; DUPLICATE_DISTANCE_THRESHOLD&#xa;LIMIT DUPLICATE_GROUP_TOP_K (default 10)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="280" y="300" width="360" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="graph" value="Построить неориентированный граф соседей&#xa;Ребро = прошли distance threshold&#xa;Фильтр title-conflict есть в коде, но сейчас отключен" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="700" y="300" width="330" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="components" value="Найти connected components&#xa;Компонента размером &lt; 2 отбрасывается" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1080" y="310" width="260" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="anchor" value="Выбрать anchor группы&#xa;min(avg shortest-path distance)&#xa;tie-break: более длинный title -> меньший vector_id" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1390" y="300" width="290" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="distances" value="Посчитать shortest-path distance от anchor до всех узлов&#xa;Сортировка items: anchor, затем по distance, затем по item_id" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1730" y="300" width="320" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="candidate_json" value="Candidate groups JSON&#xa;{ anchor_item_id, items:[{item_id,title,distance,is_anchor}] }" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="820" y="430" width="360" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="llm_regroup" value="LLM Regroup&#xa;Разбить крупную candidate group на смысловые подгруппы дублей&#xa;Выход: только anchor_item_id + item_ids" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="330" y="560" width="320" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="regroup_merge" value="Собрать новые группы по решению LLM&#xa;anchor получает distance=0.0&#xa;Остальные item payload берутся из candidate group" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="720" y="560" width="320" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="llm_filter" value="LLM Filter&#xa;Оставить только реальные дубли anchor-товара&#xa;Можно вернуть только часть duplicate_item_ids" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1110" y="560" width="300" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="filter_merge" value="Отфильтровать items внутри группы&#xa;Если после фильтра < 2 записей, группа отбрасывается" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1470" y="560" width="300" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="llm_name" value="LLM Recommendation&#xa;Для каждой финальной группы вернуть только suggested_name&#xa;duplicate_likelihood в коде затем ставится всегда = high" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1830" y="560" width="310" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="result" value="Сохранить pipeline_results&#xa;results = группы дублей + suggested_name" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1870" y="710" width="250" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="note" value="LLM вызовы идут батчами:&#xa;LLM_REGROUP_BATCH_SIZE и LLM_FILTER_BATCH_SIZE.&#xa;Для Ollama/Gemini включён JSON-only ответ и низкая температура 0.1." style="shape=note;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="40" y="560" width="230" height="120" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e1" edge="1" parent="1" source="start" target="load" style="endArrow=block;html=1;strokeWidth=2;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e2" edge="1" parent="1" source="load" target="should" style="endArrow=block;html=1;strokeWidth=2;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e3" value="Да" edge="1" parent="1" source="should" target="build_input" style="endArrow=block;html=1;strokeWidth=2;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e4" edge="1" parent="1" source="build_input" target="embed" style="endArrow=block;html=1;strokeWidth=2;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e5" edge="1" parent="1" source="embed" target="save_vector" style="endArrow=block;html=1;strokeWidth=2;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e6" value="Нет" edge="1" parent="1" source="should" target="skip_vector" style="endArrow=block;html=1;strokeWidth=2;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e7" edge="1" parent="1" source="save_vector" target="close_groups" style="endArrow=block;html=1;strokeWidth=2;rounded=1;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1805" y="250"/>
+              <mxPoint x="460" y="250"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e8" edge="1" parent="1" source="skip_vector" target="close_groups" style="endArrow=block;html=1;strokeWidth=2;rounded=1;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1050" y="270"/>
+              <mxPoint x="460" y="270"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e9" edge="1" parent="1" source="close_groups" target="graph" style="endArrow=block;html=1;strokeWidth=2;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e10" edge="1" parent="1" source="graph" target="components" style="endArrow=block;html=1;strokeWidth=2;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e11" edge="1" parent="1" source="components" target="anchor" style="endArrow=block;html=1;strokeWidth=2;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e12" edge="1" parent="1" source="anchor" target="distances" style="endArrow=block;html=1;strokeWidth=2;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e13" edge="1" parent="1" source="distances" target="candidate_json" style="endArrow=block;html=1;strokeWidth=2;rounded=1;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1890" y="470"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e14" edge="1" parent="1" source="candidate_json" target="llm_regroup" style="endArrow=block;html=1;strokeWidth=2;rounded=1;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1000" y="540"/>
+              <mxPoint x="490" y="540"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e15" edge="1" parent="1" source="llm_regroup" target="regroup_merge" style="endArrow=block;html=1;strokeWidth=2;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e16" edge="1" parent="1" source="regroup_merge" target="llm_filter" style="endArrow=block;html=1;strokeWidth=2;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e17" edge="1" parent="1" source="llm_filter" target="filter_merge" style="endArrow=block;html=1;strokeWidth=2;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e18" edge="1" parent="1" source="filter_merge" target="llm_name" style="endArrow=block;html=1;strokeWidth=2;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e19" edge="1" parent="1" source="llm_name" target="result" style="endArrow=block;html=1;strokeWidth=2;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

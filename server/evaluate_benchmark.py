@@ -37,6 +37,48 @@ def main():
         help="Override vectorizer model for local benchmark runs",
     )
     parser.add_argument(
+        "--with-llm-regroup",
+        action="store_true",
+        help="Enable LLM-based regrouping/splitting of candidate groups before filtering",
+    )
+    parser.add_argument(
+        "--llm-regroup-batch-size",
+        type=int,
+        default=None,
+        help="Number of candidate groups sent to the LLM regroup step in one request",
+    )
+    parser.add_argument(
+        "--with-llm-filter",
+        action="store_true",
+        help="Enable LLM-based duplicate group filtering before final metric calculation",
+    )
+    parser.add_argument(
+        "--llm-filter-batch-size",
+        type=int,
+        default=None,
+        help="Number of candidate groups sent to the LLM filter in one request",
+    )
+    parser.add_argument(
+        "--llm-url",
+        default=None,
+        help="Override LLM API URL for local benchmark runs",
+    )
+    parser.add_argument(
+        "--llm-model",
+        default=None,
+        help="Override LLM model for local benchmark runs",
+    )
+    parser.add_argument(
+        "--llm-provider",
+        default=None,
+        help="Override LLM provider for local benchmark runs",
+    )
+    parser.add_argument(
+        "--llm-api-key",
+        default=None,
+        help="Override LLM API key for local benchmark runs",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Enable verbose benchmark logging",
@@ -55,6 +97,14 @@ def main():
         top_k=args.top_k,
         vectorizer_api_url=args.vectorizer_url,
         vectorizer_model=args.vectorizer_model,
+        use_llm_regroup=args.with_llm_regroup,
+        llm_regroup_batch_size=args.llm_regroup_batch_size,
+        use_llm_filter=args.with_llm_filter,
+        llm_filter_batch_size=args.llm_filter_batch_size,
+        llm_api_url=args.llm_url,
+        llm_model=args.llm_model,
+        llm_provider=args.llm_provider,
+        llm_api_key=args.llm_api_key,
     )
     print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
 

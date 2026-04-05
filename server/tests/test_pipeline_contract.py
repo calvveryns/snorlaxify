@@ -10,46 +10,48 @@ from server.src.databases.database import SourceDatabase
 class FakeSourceDatabase:
     def __init__(self):
         self.resolved_pairs = None
-        self.recommendations = [
-            {
-                'anchor_item_id': 101,
-                'items': [
-                    {
-                        'item_id': 101,
-                        'title': 'Borjomi 0.5',
-                        'distance': 0.0,
-                        'is_anchor': True,
-                    },
-                    {
-                        'item_id': 102,
-                        'title': 'Borjomi 500ml',
-                        'distance': 0.02,
-                        'is_anchor': False,
-                    },
-                ],
-                'duplicate_likelihood': 'high',
-                'suggested_name': 'Borjomi 0.5',
-            },
-            {
-                'anchor_item_id': 201,
-                'items': [
-                    {
-                        'item_id': 201,
-                        'title': 'Cookie',
-                        'distance': 0.0,
-                        'is_anchor': True,
-                    },
-                    {
-                        'item_id': 202,
-                        'title': 'Cookies',
-                        'distance': 0.07,
-                        'is_anchor': False,
-                    },
-                ],
-                'duplicate_likelihood': 'low',
-                'suggested_name': None,
-            }
-        ]
+        self.recommendations = {
+            'results': [
+                {
+                    'anchor_item_id': 101,
+                    'items': [
+                        {
+                            'item_id': 101,
+                            'title': 'Borjomi 0.5',
+                            'distance': 0.0,
+                            'is_anchor': True,
+                        },
+                        {
+                            'item_id': 102,
+                            'title': 'Borjomi 500ml',
+                            'distance': 0.02,
+                            'is_anchor': False,
+                        },
+                    ],
+                    'duplicate_likelihood': 'high',
+                    'suggested_name': 'Borjomi 0.5',
+                },
+                {
+                    'anchor_item_id': 201,
+                    'items': [
+                        {
+                            'item_id': 201,
+                            'title': 'Cookie',
+                            'distance': 0.0,
+                            'is_anchor': True,
+                        },
+                        {
+                            'item_id': 202,
+                            'title': 'Cookies',
+                            'distance': 0.07,
+                            'is_anchor': False,
+                        },
+                    ],
+                    'duplicate_likelihood': 'low',
+                    'suggested_name': None,
+                }
+            ]
+        }
 
     def get_pipeline_task(self, task_id: str):
         return {

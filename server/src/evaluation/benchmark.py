@@ -27,12 +27,33 @@ class VectorizerLike(Protocol):
         ...
 
 
+class GroupFilterLike(Protocol):
+    def filter_duplicate_groups(self, groups_json: str, *, batch_size: int = 1) -> dict[str, Any]:
+        ...
+
+
+class GroupRegrouperLike(Protocol):
+    def regroup_duplicate_groups(self, groups_json: str, *, batch_size: int = 1) -> dict[str, Any]:
+        ...
+
+
 @dataclass(frozen=True)
 class BenchmarkEvaluationResult:
     dataset_path: str
     precision: float
     recall: float
     f1: float
+    candidate_precision: float
+    candidate_recall: float
+    candidate_f1: float
+    regroup_precision: float
+    regroup_recall: float
+    regroup_f1: float
+    final_precision: float
+    final_recall: float
+    final_f1: float
+    llm_regroup_enabled: bool
+    llm_filter_enabled: bool
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -189,14 +210,30 @@ def evaluate_benchmark_dataset(
     *,
     dataset_path: str = "<in-memory>",
     vectorizer: Optional[VectorizerLike] = None,
+    group_regrouper: Optional[GroupRegrouperLike] = None,
+    group_filter: Optional[GroupFilterLike] = None,
     distance_threshold: Optional[float] = None,
     top_k: Optional[int] = None,
     vectorizer_api_url: Optional[str] = None,
     vectorizer_model: Optional[str] = None,
+    use_llm_regroup: bool = False,
+    llm_regroup_batch_size: Optional[int] = None,
+    use_llm_filter: bool = False,
+    llm_filter_batch_size: Optional[int] = None,
+    llm_api_url: Optional[str] = None,
+    llm_model: Optional[str] = None,
+    llm_provider: Optional[str] = None,
+    llm_api_key: Optional[str] = None,
 ) -> BenchmarkEvaluationResult:
-    if vectorizer is None or distance_threshold is None:
+    if (
+        vectorizer is None
+        or distance_threshold is None
+        or (use_llm_regroup and group_regrouper is None)
+        or (use_llm_filter and group_filter is None)
+    ):
         from server.src.config import settings
         from server.src.utils.vectorizer import Vectorizer
+        from server.src.utils.recommender import Recommender
 
         resolved_vectorizer_api_url = adapt_service_url_for_local_run(
             vectorizer_api_url or settings.vectorizer_api_url
@@ -214,6 +251,38 @@ def evaluate_benchmark_dataset(
         distance_threshold = (
             distance_threshold if distance_threshold is not None else settings.duplicate_distance_threshold
         )
+        if (use_llm_regroup and group_regrouper is None) or (use_llm_filter and group_filter is None):
+            resolved_llm_api_url = adapt_service_url_for_local_run(llm_api_url or settings.llm_api_url)
+            resolved_llm_model = llm_model or settings.llm_model
+            resolved_llm_provider = llm_provider or settings.llm_provider
+            resolved_llm_api_key = llm_api_key if llm_api_key is not None else settings.llm_api_key
+            llm_regroup_batch_size = (
+                llm_regroup_batch_size if llm_regroup_batch_size is not None else settings.llm_regroup_batch_size
+            )
+            llm_filter_batch_size = (
+                llm_filter_batch_size if llm_filter_batch_size is not None else settings.llm_filter_batch_size
+            )
+            logger.info(
+                "Benchmark LLM config: provider=%s url=%s model=%s regroup_batch_size=%s filter_batch_size=%s",
+                resolved_llm_provider,
+                resolved_llm_api_url,
+                resolved_llm_model,
+                llm_regroup_batch_size,
+                llm_filter_batch_size,
+            )
+            recommender = Recommender(
+                api_url=resolved_llm_api_url,
+                model=resolved_llm_model,
+                provider=resolved_llm_provider,
+                api_key=resolved_llm_api_key,
+                regroup_think=settings.llm_regroup_think,
+                filter_think=settings.llm_filter_think,
+                recommend_think=settings.llm_recommend_think,
+            )
+            if use_llm_regroup and group_regrouper is None:
+                group_regrouper = recommender
+            if use_llm_filter and group_filter is None:
+                group_filter = recommender
 
     items = dataset.get("items") or []
     labeled_pairs = dataset.get("labeled_pairs") or []
@@ -258,10 +327,34 @@ def evaluate_benchmark_dataset(
         top_k=top_k,
     )
     candidate_pairs = build_pair_set_from_groups(candidate_groups)
+    regrouped_groups = candidate_groups
+    if use_llm_regroup and group_regrouper is not None:
+        if llm_regroup_batch_size is None:
+            llm_regroup_batch_size = 1
+        regrouped_result = group_regrouper.regroup_duplicate_groups(
+            json.dumps(candidate_groups, ensure_ascii=False),
+            batch_size=llm_regroup_batch_size,
+        )
+        regrouped_groups = regrouped_result.get("results") or []
+
+    regroup_pairs = build_pair_set_from_groups(regrouped_groups)
+    final_groups = regrouped_groups
+    if use_llm_filter and group_filter is not None:
+        if llm_filter_batch_size is None:
+            llm_filter_batch_size = 1
+        filtered_result = group_filter.filter_duplicate_groups(
+            json.dumps(regrouped_groups, ensure_ascii=False),
+            batch_size=llm_filter_batch_size,
+        )
+        final_groups = filtered_result.get("results") or []
+
+    final_pairs = build_pair_set_from_groups(final_groups)
     gold_pairs = build_gold_pair_set_from_labeled_dataset(labeled_pairs)
     logger.info(
-        "Candidate-only benchmark produced candidate_pairs=%s gold_pairs=%s",
+        "Benchmark produced candidate_pairs=%s regroup_pairs=%s final_pairs=%s gold_pairs=%s",
         len(candidate_pairs),
+        len(regroup_pairs),
+        len(final_pairs),
         len(gold_pairs),
     )
 
@@ -285,17 +378,36 @@ def evaluate_benchmark_dataset(
     logger.info("Gold pair diagnostics count=%s", len(gold_pair_diagnostics))
     logger.debug("Gold pair diagnostics: %s", json.dumps(gold_pair_diagnostics, ensure_ascii=False, indent=2))
 
-    metrics = PairQualityMetrics.from_sets(candidate_pairs, gold_pairs)
+    candidate_metrics = PairQualityMetrics.from_sets(candidate_pairs, gold_pairs)
+    regroup_metrics = PairQualityMetrics.from_sets(regroup_pairs, gold_pairs)
+    final_metrics = PairQualityMetrics.from_sets(final_pairs, gold_pairs)
     logger.info(
-        "Metrics summary: precision=%.4f recall=%.4f f1=%.4f",
-        metrics.precision,
-        metrics.recall,
-        metrics.f1,
+        "Metrics summary: candidate_precision=%.4f candidate_recall=%.4f candidate_f1=%.4f regroup_precision=%.4f regroup_recall=%.4f regroup_f1=%.4f final_precision=%.4f final_recall=%.4f final_f1=%.4f",
+        candidate_metrics.precision,
+        candidate_metrics.recall,
+        candidate_metrics.f1,
+        regroup_metrics.precision,
+        regroup_metrics.recall,
+        regroup_metrics.f1,
+        final_metrics.precision,
+        final_metrics.recall,
+        final_metrics.f1,
     )
 
     return BenchmarkEvaluationResult(
         dataset_path=dataset_path,
-        precision=metrics.precision,
-        recall=metrics.recall,
-        f1=metrics.f1,
+        precision=final_metrics.precision,
+        recall=final_metrics.recall,
+        f1=final_metrics.f1,
+        candidate_precision=candidate_metrics.precision,
+        candidate_recall=candidate_metrics.recall,
+        candidate_f1=candidate_metrics.f1,
+        regroup_precision=regroup_metrics.precision,
+        regroup_recall=regroup_metrics.recall,
+        regroup_f1=regroup_metrics.f1,
+        final_precision=final_metrics.precision,
+        final_recall=final_metrics.recall,
+        final_f1=final_metrics.f1,
+        llm_regroup_enabled=use_llm_regroup,
+        llm_filter_enabled=use_llm_filter,
     )

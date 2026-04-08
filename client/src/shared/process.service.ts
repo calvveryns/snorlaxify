@@ -1,11 +1,11 @@
-import { HttpClient } from "@angular/common/http";
-import { inject, Injectable } from "@angular/core";
-import { map, Observable } from "rxjs";
+import { HttpClient } from '@angular/common/http';
+import { inject, Injectable } from '@angular/core';
+import { map, Observable } from 'rxjs';
 
-const baseUrl = 'http://localhost:8080';
-const prefix = 'api'
+const baseUrl = '';
+const prefix = 'api';
 
-export const statuses = ['new', 'running', 'completed', 'failed'] as const;
+export const statuses = ['pending', 'running', 'paused', 'completed', 'failed'] as const;
 
 export enum Step {
     Setup,
@@ -15,77 +15,126 @@ export enum Step {
     Recommendations,
 }
 
-export type Process = {
-    date: string;
-    databaseName: string;
-    duplicatesFound: number;
-    processingTime: string;
-    status: typeof statuses[number];
+export type DuplicateLikelihood = 'high' | 'medium' | 'low';
+
+export type DuplicateGroupItemRecommendation = {
+  item_id: number;
+  title: string;
+  distance: number;
+  is_anchor: boolean;
 };
 
-export type RecommedationDTO = {
-    results: {
-        "distance": number,
-        "title_one": string,
-        "title_two": string,
-        "suggested_name": string,
-        "duplicate_likelihood": string,
-    }[]
+export type DuplicateRecommendation = {
+  anchor_item_id: number;
+  items: DuplicateGroupItemRecommendation[];
+  suggested_name: string | null;
+  duplicate_likelihood: DuplicateLikelihood;
+};
 
-}
+export type PipelineRecommendationsDTO = {
+  results: DuplicateRecommendation[];
+  message?: string;
+};
+
+export type ResolvePairPayload = {
+  anchor_item_id: number;
+  items: Array<{
+    item_id: number;
+    title: string;
+  }>;
+  action: 'merge' | 'ignore';
+  suggested_name: string | null;
+};
 
 export type ProcessDTO = {
-    task_id?: string;
-    "uuid": string,
-    "status": string,
-    "started_at": string,
-    "completed_at": string,
-    "paused_at": string,
-    "recommendations": RecommedationDTO[],
-    "current_step": number,
-    "total_steps": number
+  task_id: string;
+  uuid?: string;
+  status: string;
+  started_at: string | null;
+  completed_at: string | null;
+  paused_at: string | null;
+  recommendations: PipelineRecommendationsDTO;
+  current_step: number;
+  total_steps: number;
+  error?: string | null;
+  processingTime?: string;
 };
 
 export type ProcessesResponse = {
-    count: number;
-    tasks: ProcessDTO[];
+  count: number;
+  tasks: ProcessDTO[];
 };
 
-const getProcessingTime = (start: string, stop: string): string => stop && start
-    ? new Date(new Date(stop).getTime() - new Date(start).getTime())
-        .toISOString().substr(11, 8)
-    : 'N/A'
+export type PipelineResultDTO = {
+  task_id: string;
+  status: string;
+  recommendations: PipelineRecommendationsDTO;
+};
+
+export type PipelineResponse = {
+  status: string;
+  message: string;
+  task_id: string;
+};
+
+export type ResolveResponse = PipelineResponse & {
+  resolved_count: number;
+};
+
+const getProcessingTime = (start: string | null, stop: string | null): string =>
+  stop && start
+    ? new Date(new Date(stop).getTime() - new Date(start).getTime()).toISOString().substr(11, 8)
+    : 'N/A';
 
 @Injectable()
 export class ProcessService {
-    private readonly http = inject(HttpClient);
-    
-    getProcesses(): Observable<ProcessesResponse> {
-        return this.http.get<ProcessesResponse>(`${baseUrl}/${prefix}/pipeline/status`).pipe(
-            map(response => ({
-                ...response,
-                tasks: response.tasks.map(task => ({
-                    ...task,
-                    processingTime: getProcessingTime(task.started_at, task.completed_at),
-                }))
-            }))
-        );
-    }
+  private readonly http = inject(HttpClient);
 
-    getProcess(uuid: string): Observable<ProcessDTO> {
-        return this.http.get<ProcessDTO>(`${baseUrl}/${prefix}/pipeline/${uuid}/status`).pipe(
-            map(response => ({
-                ...response,
-                processingTime: getProcessingTime(response.started_at, response.completed_at),
-            }))
-        );
-    }
+  getProcesses(): Observable<ProcessesResponse> {
+    return this.http.get<ProcessesResponse>(`${baseUrl}/${prefix}/pipeline/status`).pipe(
+      map((response) => ({
+        ...response,
+        tasks: response.tasks.map((task) => ({
+          ...task,
+          task_id: task.task_id ?? task.uuid ?? '',
+          recommendations: task.recommendations ?? { results: [] },
+          processingTime: getProcessingTime(task.started_at, task.completed_at),
+        })),
+      }))
+    );
+  }
 
-    startProcess(): Observable<void> {
-        return this.http.post<void>(`${baseUrl}/${prefix}/pipeline/start`, {});
-    }
+  getProcess(uuid: string): Observable<ProcessDTO> {
+    return this.http.get<ProcessDTO>(`${baseUrl}/${prefix}/pipeline/${uuid}/status`).pipe(
+      map((response) => ({
+        ...response,
+        task_id: response.task_id ?? response.uuid ?? uuid,
+        recommendations: response.recommendations ?? { results: [] },
+        processingTime: getProcessingTime(response.started_at, response.completed_at),
+      }))
+    );
+  }
 
-    deleteProcess(uuid: string): Observable<void> {
-        return this.http.delete<void>(`${baseUrl}/${prefix}/pipeline/${uuid}`, {});
-    }
+  getProcessResult(uuid: string): Observable<PipelineResultDTO> {
+    return this.http.get<PipelineResultDTO>(`${baseUrl}/${prefix}/pipeline/${uuid}/result`).pipe(
+      map((response) => ({
+        ...response,
+        recommendations: response.recommendations ?? { results: [] },
+      }))
+    );
+  }
+
+  startProcess(): Observable<PipelineResponse> {
+    return this.http.post<PipelineResponse>(`${baseUrl}/${prefix}/pipeline/start`, {});
+  }
+
+  deleteProcess(uuid: string): Observable<PipelineResponse> {
+    return this.http.delete<PipelineResponse>(`${baseUrl}/${prefix}/pipeline/${uuid}`, {});
+  }
+
+  resolveProcess(uuid: string, pairs: ResolvePairPayload[]): Observable<ResolveResponse> {
+    return this.http.post<ResolveResponse>(`${baseUrl}/${prefix}/pipeline/${uuid}/resolve`, {
+      groups: pairs,
+    });
+  }
 }

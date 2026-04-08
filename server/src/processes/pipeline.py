@@ -2,14 +2,35 @@ import json
 import logging
 import threading
 import time
+from typing import Optional
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 from server.src.config import settings
 from server.src.databases import SourceDatabase
 from server.src.utils.vectorizer import Vectorizer
 from server.src.utils.recommender import Recommender
+from server.src.utils.vectorizer_input import (
+    build_vectorizer_input,
+    calculate_vectorizer_input_hash,
+)
 
 logger = logging.getLogger(__name__)
+def should_vectorize_identifier(identifier: dict, vectorizer_model: Optional[str]) -> bool:
+    stored_input_hash = identifier.get("stored_vector_input_hash")
+    if not stored_input_hash:
+        return True
+
+    if identifier.get("vector_model") != vectorizer_model:
+        return True
+
+    updated_at = identifier.get("updated_at")
+    vector_source_updated_at = identifier.get("vector_source_updated_at")
+    if updated_at and vector_source_updated_at and updated_at > vector_source_updated_at:
+        return True
+
+    vectorizer_input = build_vectorizer_input(identifier)
+    input_hash = calculate_vectorizer_input_hash(vectorizer_input)
+    return input_hash != stored_input_hash
 
 
 class PipelineController:
@@ -45,14 +66,28 @@ def remove_pipeline_controller(task_id: str):
 
 def pipeline(task_id: str, source_db: SourceDatabase, start_from_step: int = 0):
     vectorizer = Vectorizer(settings.vectorizer_api_url, settings.vectorizer_model)
-    recommender = Recommender(api_url=settings.llm_api_url, model=settings.llm_model)
+    recommender = Recommender(
+        api_url=settings.llm_api_url,
+        model=settings.llm_model,
+        provider=settings.llm_provider,
+        api_key=settings.llm_api_key,
+        regroup_think=settings.llm_regroup_think,
+        filter_think=settings.llm_filter_think,
+        recommend_think=settings.llm_recommend_think,
+    )
     controller = get_pipeline_controller(task_id)
+    candidate_groups_json = "[]"
+    regrouped_groups_json = "[]"
+    filtered_groups_json = "[]"
+    recommendations = {"results": []}
 
     steps = [
         "Setting up source database",
         "Vectorizing identifiers",
         "Committing changes",
-        "Finding close pairs",
+        "Finding duplicate groups",
+        "Splitting duplicate groups with LLM",
+        "Filtering duplicate groups with LLM",
         "Requesting recommendations"
     ]
 
@@ -77,14 +112,26 @@ def pipeline(task_id: str, source_db: SourceDatabase, start_from_step: int = 0):
                 if start_from_step <= 1:
                     controller.wait_if_paused()
                     pbar.set_postfix_str(steps[1])
-                    identifiers = source_db.get_identifiers()
+                    identifiers = source_db.get_identifiers_with_vector_metadata()
                     for identifier in tqdm(
                             identifiers, desc="Vectorizing identifiers", unit="item", leave=False
                     ):
                         controller.wait_if_paused()
                         try:
-                            vector = vectorizer.vectorize(identifier)
-                            source_db.insert_or_update_vector(identifier, vector)
+                            vectorizer_input = build_vectorizer_input(identifier)
+                            input_hash = calculate_vectorizer_input_hash(vectorizer_input)
+                            if not should_vectorize_identifier(identifier, settings.vectorizer_model):
+                                continue
+
+                            vector = vectorizer.vectorize(vectorizer_input)
+                            source_db.insert_or_update_vector(
+                                identifier["item_id"],
+                                identifier["name"],
+                                vector,
+                                input_hash=input_hash,
+                                source_updated_at=identifier.get("updated_at"),
+                                model=settings.vectorizer_model,
+                            )
                         except Exception as e:
                             logger.error(f"Error processing identifier {identifier}: {e}")
                     source_db.update_pipeline_task_status(task_id, "running", current_step=1)
@@ -99,23 +146,73 @@ def pipeline(task_id: str, source_db: SourceDatabase, start_from_step: int = 0):
                     pbar.update(1)
                     start_from_step = 3
 
-                # Finding close pairs
+                # Finding duplicate groups
                 if start_from_step <= 3:
                     controller.wait_if_paused()
                     pbar.set_postfix_str(steps[3])
-                    results = source_db.get_close_pairs()
-                    results_json = json.dumps(results, indent=2)
+                    results = source_db.get_close_groups()
+                    candidate_groups_json = json.dumps(results, indent=2)
                     source_db.update_pipeline_task_status(task_id, "running", current_step=3)
                     pbar.update(1)
                     start_from_step = 4
 
-                # Requesting recommendations
+                # Splitting duplicate groups with LLM
                 if start_from_step <= 4:
                     controller.wait_if_paused()
                     pbar.set_postfix_str(steps[4])
-                    recommendations = recommender.recommend_duplicates(results_json)
-                    source_db.save_pipeline_result(task_id, recommendations)
+                    if candidate_groups_json == "[]":
+                        candidate_groups_json = json.dumps(source_db.get_close_groups(), indent=2)
+                    regrouped_groups = recommender.regroup_duplicate_groups(
+                        candidate_groups_json,
+                        batch_size=settings.llm_regroup_batch_size,
+                    )
+                    regrouped_groups_json = json.dumps(regrouped_groups.get("results", []), indent=2)
                     source_db.update_pipeline_task_status(task_id, "running", current_step=4)
+                    pbar.update(1)
+                    start_from_step = 5
+
+                # Filtering duplicate groups with LLM
+                if start_from_step <= 5:
+                    controller.wait_if_paused()
+                    pbar.set_postfix_str(steps[5])
+                    if regrouped_groups_json == "[]":
+                        if candidate_groups_json == "[]":
+                            candidate_groups_json = json.dumps(source_db.get_close_groups(), indent=2)
+                        regrouped_groups = recommender.regroup_duplicate_groups(
+                            candidate_groups_json,
+                            batch_size=settings.llm_regroup_batch_size,
+                        )
+                        regrouped_groups_json = json.dumps(regrouped_groups.get("results", []), indent=2)
+                    filtered_groups = recommender.filter_duplicate_groups(
+                        regrouped_groups_json,
+                        batch_size=settings.llm_filter_batch_size,
+                    )
+                    filtered_groups_json = json.dumps(filtered_groups.get("results", []), indent=2)
+                    source_db.update_pipeline_task_status(task_id, "running", current_step=5)
+                    pbar.update(1)
+                    start_from_step = 6
+
+                # Requesting recommendations
+                if start_from_step <= 6:
+                    controller.wait_if_paused()
+                    pbar.set_postfix_str(steps[6])
+                    if filtered_groups_json == "[]":
+                        if regrouped_groups_json == "[]":
+                            if candidate_groups_json == "[]":
+                                candidate_groups_json = json.dumps(source_db.get_close_groups(), indent=2)
+                            regrouped_groups = recommender.regroup_duplicate_groups(
+                                candidate_groups_json,
+                                batch_size=settings.llm_regroup_batch_size,
+                            )
+                            regrouped_groups_json = json.dumps(regrouped_groups.get("results", []), indent=2)
+                        filtered_groups = recommender.filter_duplicate_groups(
+                            regrouped_groups_json,
+                            batch_size=settings.llm_filter_batch_size,
+                        )
+                        filtered_groups_json = json.dumps(filtered_groups.get("results", []), indent=2)
+                    recommendations = recommender.recommend_duplicates(filtered_groups_json)
+                    source_db.save_pipeline_result(task_id, recommendations)
+                    source_db.update_pipeline_task_status(task_id, "running", current_step=6)
                     pbar.update(1)
 
         logger.info(f"Pipeline completed successfully for task {task_id}")

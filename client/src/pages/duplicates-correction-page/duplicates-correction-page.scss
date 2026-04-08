@@ -46,6 +46,51 @@
   }
 }
 
+.status-banner,
+.empty-state {
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border-radius: 8px;
+  border: 1px solid;
+  font-size: 14px;
+}
+
+.status-banner.success {
+  background: #eefbf3;
+  border-color: #99d9ae;
+  color: #1f6b38;
+}
+
+.status-banner.error {
+  background: #fff3f2;
+  border-color: #f2b8b5;
+  color: #9f2d2d;
+}
+
+.empty-state {
+  background: #fff;
+  border-color: #e0e0e0;
+  color: #555;
+}
+
+.success-state {
+  margin-bottom: 24px;
+  padding: 24px;
+  background: #fff;
+  border: 1px solid #99d9ae;
+  border-radius: 12px;
+
+  h3 {
+    margin: 0 0 8px;
+    color: #1f6b38;
+  }
+
+  p {
+    margin: 0 0 16px;
+    color: #355244;
+  }
+}
+
 .content-wrapper {
   display: grid;
   grid-template-columns: 350px 1fr;
@@ -57,6 +102,15 @@
   display: flex;
   flex-direction: column;
   gap: 24px;
+}
+
+.right-panel {
+  position: sticky;
+  top: 24px;
+  align-self: start;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .section {
@@ -71,6 +125,23 @@
   font-size: 16px;
   font-weight: 600;
   color: #333;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.section-meta,
+.decision-chip {
+  font-size: 13px;
+  color: #555;
+  background: #f2f4f7;
+  border-radius: 999px;
+  padding: 6px 10px;
 }
 
 .groups-list {
@@ -122,6 +193,21 @@
   }
 }
 
+.group-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.group-subtitle {
+  font-size: 12px;
+  color: #777;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .proposed-name {
   display: flex;
   align-items: center;
@@ -158,6 +244,36 @@
   }
 }
 
+.facts-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+  font-size: 14px;
+  color: #333;
+}
+
+.selection-hint {
+  margin: -8px 0 20px;
+  font-size: 13px;
+  color: #666;
+}
+
+.label,
+.input-label {
+  font-weight: 600;
+  color: #555;
+}
+
+.input-label {
+  display: block;
+  margin-bottom: 8px;
+}
+
+input[pInputText] {
+  width: 100%;
+}
+
 .actions-bottom {
   display: flex;
   gap: 12px;
@@ -166,6 +282,15 @@
 
   ::ng-deep .p-button {
     flex: 1;
+  }
+}
+
+.actions-bottom.compact {
+  margin-top: 0;
+  padding-top: 0;
+
+  ::ng-deep .p-button {
+    flex: 0 0 auto;
   }
 }
 
@@ -184,3 +309,29 @@
   }
 }
 
+.anchor-label {
+  font-size: 13px;
+  color: #666;
+  font-weight: 500;
+}
+
+@media (max-width: 1100px) {
+  :host {
+    padding: 24px;
+  }
+
+  .content-wrapper {
+    grid-template-columns: 1fr;
+  }
+
+  .right-panel {
+    position: static;
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  .facts-grid {
+    grid-template-columns: 1fr;
+  }
+}

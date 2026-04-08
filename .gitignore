@@ -172,7 +172,7 @@ __screenshots__/
 *.sqlite3
 *.db-shm
 *.db-wal
-*.sql
+# *.sql
 
 # ==============================================
 # IDEs and editors

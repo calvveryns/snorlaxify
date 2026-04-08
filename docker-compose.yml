@@ -20,13 +20,17 @@ services:
       context: .
       dockerfile: Dockerfile.server
     container_name: snorlaxify-server
-    network_mode: host
+    ports:
+      - "8080:8080"
     environment:
-      DB_SOURCE_URL: postgresql://postgres:postgres@localhost:5432/openpim
+      DB_SOURCE_URL: postgresql://postgres:postgres@postgres:5432/openpim
       VECTORIZER_API_URL: ${VECTORIZER_API_URL}
       VECTORIZER_MODEL: ${VECTORIZER_MODEL}
+      LLM_PROVIDER: ${LLM_PROVIDER}
       LLM_API_URL: ${LLM_API_URL}
       LLM_MODEL: ${LLM_MODEL}
+      LLM_API_KEY: ${LLM_API_KEY}
+      DUPLICATE_DISTANCE_THRESHOLD: ${DUPLICATE_DISTANCE_THRESHOLD}
     depends_on:
       postgres:
         condition: service_healthy

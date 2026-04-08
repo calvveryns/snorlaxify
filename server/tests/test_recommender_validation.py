@@ -1,0 +1,388 @@
+import unittest
+from unittest.mock import Mock, patch
+
+from server.src.utils.recommender import (
+    FilteredDuplicateGroupDecisions,
+    GroupDecisions,
+    ProductDecisions,
+    RegroupedDuplicateGroupDecisions,
+    Recommender,
+)
+
+
+class RecommenderValidationTests(unittest.TestCase):
+    def setUp(self):
+        self.recommender = Recommender("http://example.test", "fake-model")
+        self.input_pairs = [
+            {
+                "item_one_id": 1,
+                "item_two_id": 2,
+                "title_one": "A",
+                "title_two": "B",
+                "distance": 0.01,
+            },
+            {
+                "item_one_id": 3,
+                "item_two_id": 4,
+                "title_one": "C",
+                "title_two": "D",
+                "distance": 0.02,
+            },
+        ]
+
+    def test_accepts_exact_input_pairs(self):
+        output_pairs = ProductDecisions.model_validate(
+            {
+                "results": [
+                    {
+                        "item_one_id": 1,
+                        "item_two_id": 2,
+                        "suggested_name": "A",
+                    },
+                    {
+                        "item_one_id": 3,
+                        "item_two_id": 4,
+                        "suggested_name": None,
+                    },
+                ]
+            }
+        )
+
+        self.assertTrue(self.recommender._matches_input_pairs(self.input_pairs, output_pairs))
+
+    def test_rejects_pairs_missing_from_input(self):
+        output_pairs = ProductDecisions.model_validate(
+            {
+                "results": [
+                    {
+                        "item_one_id": 1,
+                        "item_two_id": 2,
+                        "suggested_name": "A",
+                    },
+                    {
+                        "item_one_id": 2,
+                        "item_two_id": 1,
+                        "suggested_name": "A",
+                    },
+                ]
+            }
+        )
+
+        self.assertFalse(self.recommender._matches_input_pairs(self.input_pairs, output_pairs))
+
+    def test_group_decision_accepts_only_suggested_name(self):
+        output_groups = GroupDecisions.model_validate(
+            {
+                "results": [
+                    {
+                        "suggested_name": "A",
+                    }
+                ]
+            }
+        )
+
+        self.assertEqual(output_groups.results[0].suggested_name, "A")
+
+    def test_group_decision_rejects_unexpected_ids(self):
+        with self.assertRaises(Exception):
+            GroupDecisions.model_validate(
+                {
+                    "results": [
+                        {
+                            "anchor_item_id": 1,
+                            "duplicate_item_ids": [2, 3],
+                            "suggested_name": "A",
+                        }
+                    ]
+                }
+            )
+
+    def test_merge_batch_results_keeps_filtered_groups_high_confidence(self):
+        batch = [
+            {
+                "anchor_item_id": 1,
+                "items": [
+                    {"item_id": 1, "title": "A", "distance": 0.0, "is_anchor": True},
+                    {"item_id": 2, "title": "B", "distance": 0.01, "is_anchor": False},
+                ],
+            },
+            {
+                "anchor_item_id": 3,
+                "items": [
+                    {"item_id": 3, "title": "C", "distance": 0.0, "is_anchor": True},
+                    {"item_id": 4, "title": "D", "distance": 0.02, "is_anchor": False},
+                ],
+            },
+        ]
+        decisions = GroupDecisions.model_validate(
+            {
+                "results": [
+                    {"suggested_name": "Normalized A"},
+                    {"suggested_name": None},
+                ]
+            }
+        )
+
+        merged = self.recommender._merge_batch_results(batch, decisions)
+
+        self.assertEqual(merged[0]["suggested_name"], "Normalized A")
+        self.assertEqual(merged[0]["duplicate_likelihood"], "high")
+        self.assertIsNone(merged[1]["suggested_name"])
+        self.assertEqual(merged[1]["duplicate_likelihood"], "high")
+
+    def test_fallback_group_decisions_uses_anchor_title(self):
+        batch = [
+            {
+                "anchor_item_id": 1,
+                "items": [
+                    {"item_id": 2, "title": "B", "distance": 0.01, "is_anchor": False},
+                    {"item_id": 1, "title": "Anchor A", "distance": 0.0, "is_anchor": True},
+                ],
+            },
+            {
+                "anchor_item_id": 3,
+                "items": [],
+            },
+        ]
+
+        decisions = self.recommender._fallback_group_decisions(batch)
+
+        self.assertEqual(decisions.results[0].suggested_name, "Anchor A")
+        self.assertIsNone(decisions.results[1].suggested_name)
+
+    def test_filter_validation_accepts_subset_of_groups_and_items(self):
+        batch = [
+            {
+                "anchor_item_id": 1,
+                "items": [
+                    {"item_id": 1, "title": "A", "distance": 0.0, "is_anchor": True},
+                    {"item_id": 2, "title": "A 500ml", "distance": 0.01, "is_anchor": False},
+                    {"item_id": 3, "title": "Different", "distance": 0.02, "is_anchor": False},
+                ],
+            },
+            {
+                "anchor_item_id": 4,
+                "items": [
+                    {"item_id": 4, "title": "B", "distance": 0.0, "is_anchor": True},
+                    {"item_id": 5, "title": "Not duplicate", "distance": 0.03, "is_anchor": False},
+                ],
+            },
+        ]
+        decisions = FilteredDuplicateGroupDecisions.model_validate(
+            {
+                "results": [
+                    {
+                        "anchor_item_id": 1,
+                        "duplicate_item_ids": [2],
+                    }
+                ]
+            }
+        )
+
+        self.assertTrue(self.recommender._matches_filter_input(batch, decisions))
+
+    def test_merge_filtered_groups_drops_non_duplicates_and_empty_groups(self):
+        batch = [
+            {
+                "anchor_item_id": 1,
+                "items": [
+                    {"item_id": 1, "title": "A", "distance": 0.0, "is_anchor": True},
+                    {"item_id": 2, "title": "A 500ml", "distance": 0.01, "is_anchor": False},
+                    {"item_id": 3, "title": "Different", "distance": 0.02, "is_anchor": False},
+                ],
+            },
+            {
+                "anchor_item_id": 4,
+                "items": [
+                    {"item_id": 4, "title": "B", "distance": 0.0, "is_anchor": True},
+                    {"item_id": 5, "title": "Not duplicate", "distance": 0.03, "is_anchor": False},
+                ],
+            },
+        ]
+        decisions = FilteredDuplicateGroupDecisions.model_validate(
+            {
+                "results": [
+                    {
+                        "anchor_item_id": 1,
+                        "duplicate_item_ids": [2],
+                    }
+                ]
+            }
+        )
+
+        merged = self.recommender._merge_filtered_groups(batch, decisions)
+
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]["anchor_item_id"], 1)
+        self.assertEqual([item["item_id"] for item in merged[0]["items"]], [1, 2])
+
+    def test_regroup_validation_accepts_split_into_multiple_subgroups(self):
+        batch = [
+            {
+                "anchor_item_id": 1005,
+                "items": [
+                    {"item_id": 1005, "title": "Спрайт 0.5л", "distance": 0.0, "is_anchor": True},
+                    {"item_id": 1004, "title": "Спрайт 500ml", "distance": 0.16, "is_anchor": False},
+                    {"item_id": 1006, "title": "Sprite 500 ml", "distance": 0.29, "is_anchor": False},
+                    {"item_id": 1007, "title": "Кока-Кола 1л", "distance": 0.49, "is_anchor": False},
+                    {"item_id": 1008, "title": "Coca Cola 1 л", "distance": 0.59, "is_anchor": False},
+                ],
+            }
+        ]
+        decisions = RegroupedDuplicateGroupDecisions.model_validate(
+            {
+                "results": [
+                    {"anchor_item_id": 1005, "item_ids": [1005, 1004, 1006]},
+                    {"anchor_item_id": 1007, "item_ids": [1007, 1008]},
+                ]
+            }
+        )
+
+        self.assertTrue(self.recommender._matches_regroup_input(batch, decisions))
+
+    def test_merge_regrouped_groups_splits_one_group_into_two(self):
+        batch = [
+            {
+                "anchor_item_id": 1005,
+                "items": [
+                    {"item_id": 1005, "title": "Спрайт 0.5л", "distance": 0.0, "is_anchor": True},
+                    {"item_id": 1004, "title": "Спрайт 500ml", "distance": 0.1662, "is_anchor": False},
+                    {"item_id": 1009, "title": "Кола 0.5л", "distance": 0.2351, "is_anchor": False},
+                    {"item_id": 1006, "title": "Sprite 500 ml", "distance": 0.2976, "is_anchor": False},
+                    {"item_id": 1007, "title": "Кока-Кола 1л", "distance": 0.4901, "is_anchor": False},
+                    {"item_id": 1008, "title": "Coca Cola 1 л", "distance": 0.5969, "is_anchor": False},
+                ],
+            }
+        ]
+        decisions = RegroupedDuplicateGroupDecisions.model_validate(
+            {
+                "results": [
+                    {"anchor_item_id": 1005, "item_ids": [1005, 1004, 1006]},
+                    {"anchor_item_id": 1007, "item_ids": [1007, 1008]},
+                ]
+            }
+        )
+
+        merged = self.recommender._merge_regrouped_groups(batch, decisions)
+
+        self.assertEqual(len(merged), 2)
+        self.assertEqual(merged[0]["anchor_item_id"], 1005)
+        self.assertEqual([item["item_id"] for item in merged[0]["items"]], [1005, 1004, 1006])
+        self.assertEqual(merged[1]["anchor_item_id"], 1007)
+        self.assertEqual([item["item_id"] for item in merged[1]["items"]], [1007, 1008])
+        self.assertTrue(merged[1]["items"][0]["is_anchor"])
+        self.assertEqual(merged[1]["items"][0]["distance"], 0.0)
+
+    def test_gemini_request_uses_generate_content_shape(self):
+        recommender = Recommender(
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+            "gemini-2.5-flash",
+            provider="gemini",
+            api_key="secret-key",
+        )
+
+        payload = recommender._build_payload("hello", GroupDecisions, think=False)
+        request_url = recommender._build_request_url()
+
+        self.assertEqual(payload["contents"][0]["parts"][0]["text"], "hello")
+        self.assertEqual(payload["generationConfig"]["responseMimeType"], "application/json")
+        self.assertNotIn("model", payload)
+        self.assertIn("key=secret-key", request_url)
+
+    def test_build_payload_uses_stage_think_flag_for_ollama(self):
+        recommender = Recommender("http://example.test", "fake-model")
+
+        payload = recommender._build_payload("hello", GroupDecisions, think=False)
+
+        self.assertFalse(payload["think"])
+        self.assertFalse(payload["reasoning"])
+
+    @patch.object(Recommender, "_request_llm")
+    def test_stage_requests_pass_distinct_think_flags(self, mock_request_llm: Mock):
+        recommender = Recommender(
+            "http://example.test",
+            "fake-model",
+            regroup_think=True,
+            filter_think=False,
+            recommend_think=True,
+        )
+        mock_request_llm.side_effect = [
+            '{"results":[{"anchor_item_id":1,"item_ids":[1,2]}]}',
+            '{"results":[{"anchor_item_id":1,"duplicate_item_ids":[2]}]}',
+            '{"results":[{"suggested_name":"Normalized A"}]}',
+        ]
+        batch = [
+            {
+                "anchor_item_id": 1,
+                "items": [
+                    {"item_id": 1, "title": "A", "distance": 0.0, "is_anchor": True},
+                    {"item_id": 2, "title": "B", "distance": 0.01, "is_anchor": False},
+                ],
+            }
+        ]
+
+        recommender._request_regroup_batch(1, batch)
+        recommender._request_filter_batch(2, batch)
+        recommender._request_recommendation_batch(3, batch)
+
+        self.assertTrue(mock_request_llm.call_args_list[0].kwargs["think"])
+        self.assertFalse(mock_request_llm.call_args_list[1].kwargs["think"])
+        self.assertTrue(mock_request_llm.call_args_list[2].kwargs["think"])
+
+    def test_extract_content_supports_gemini_candidates(self):
+        recommender = Recommender("http://example.test", "gemini-2.5-flash", provider="gemini")
+
+        content = recommender._extract_content(
+            {
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [
+                                {"text": "{\"results\":["},
+                                {"text": "{\"suggested_name\":null}"},
+                                {"text": "]}"},
+                            ]
+                        }
+                    }
+                ]
+            }
+        )
+
+        self.assertEqual(content, "{\"results\":[{\"suggested_name\":null}]}")
+
+    @patch("server.src.utils.recommender.requests.post")
+    def test_request_recommendation_batch_parses_gemini_json_response(self, mock_post: Mock):
+        recommender = Recommender("http://example.test", "gemini-2.5-flash", provider="gemini")
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.text = "{\"ok\":true}"
+        mock_response.json.return_value = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {"text": "{\"results\":[{\"suggested_name\":\"Normalized A\"}]}"}
+                        ]
+                    }
+                }
+            ]
+        }
+        mock_post.return_value = mock_response
+
+        batch = [
+            {
+                "anchor_item_id": 1,
+                "items": [
+                    {"item_id": 1, "title": "A", "distance": 0.0, "is_anchor": True},
+                    {"item_id": 2, "title": "B", "distance": 0.01, "is_anchor": False},
+                ],
+            }
+        ]
+
+        decisions = recommender._request_recommendation_batch(1, batch)
+
+        self.assertEqual(decisions.results[0].suggested_name, "Normalized A")
+
+
+if __name__ == "__main__":
+    unittest.main()

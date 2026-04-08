@@ -1,25 +1,40 @@
-<div class="duplicates-correction-container" *ngIf="databaseName()">
+<div class="duplicates-correction-container" *ngIf="!loading(); else loadingState">
   <div class="breadcrumbs">
     <a routerLink="/processes" class="breadcrumb-link">Процессы</a>
     <span class="breadcrumb-separator">/</span>
-    <span class="breadcrumb-current">{{ databaseName() }}</span>
+    <a [routerLink]="['/processes', taskId()]" class="breadcrumb-link">{{ taskId() }}</a>
     <span class="breadcrumb-separator">/</span>
     <span class="breadcrumb-current">Исправление дубликатов</span>
   </div>
 
   <div class="header">
-    <h2>База данных: {{ databaseName() }}</h2>
+    <h2>Ручная обработка дублей: {{ taskId() }}</h2>
   </div>
 
-  <div class="content-wrapper">
+  <div class="status-banner error" *ngIf="loadError()">{{ loadError() }}</div>
+  <div class="status-banner error" *ngIf="saveError()">{{ saveError() }}</div>
+
+  <div class="success-state" *ngIf="successMessage() as message">
+    <h3>Решения применены</h3>
+    <p>{{ message }}</p>
+    <div class="actions-bottom compact">
+      <button pButton type="button" label="Назад к процессу" (click)="onCancel()"></button>
+    </div>
+  </div>
+
+  <div class="empty-state" *ngIf="!loadError() && duplicateGroups().length === 0">
+    Для этой задачи нет рекомендаций для ручной обработки.
+  </div>
+
+  <div class="content-wrapper" *ngIf="duplicateGroups().length > 0 && !successMessage()">
     <div class="left-panel">
       <div class="section">
-        <h3 class="section-title">Список групп дубликатов</h3>
+        <div class="section-head">
+          <h3 class="section-title">Группы дубликатов</h3>
+          <span class="section-meta">Проверено: {{ reviewedCount() }}/{{ duplicateGroups().length }}</span>
+        </div>
+
         <div class="groups-list">
-          <div class="groups-header">
-            <p-checkbox></p-checkbox>
-            <span class="header-text">Проверено</span>
-          </div>
           <div
             *ngFor="let group of duplicateGroups()"
             class="group-item"
@@ -32,104 +47,125 @@
               (ngModelChange)="onGroupCheck(group, $event)"
               (click)="$event.stopPropagation()"
             ></p-checkbox>
-            <span class="group-name">{{ group.name }}</span>
+            <div class="group-copy">
+              <span class="group-name">{{ group.name }}</span>
+              <span class="group-subtitle">{{ group.anchorTitle }} • дублей: {{ group.duplicatesCount }}</span>
+            </div>
           </div>
         </div>
+
         <div class="actions-bottom">
-          <button pButton type="button" label="Сохранить изменения" (click)="onSaveChanges()"></button>
+          <button
+            pButton
+            type="button"
+            label="Применить решения"
+            (click)="onSaveChanges()"
+            [loading]="isSaving()"
+          ></button>
         </div>
       </div>
     </div>
 
-    <div class="right-panel" *ngIf="selectedGroup()">
+    <div class="right-panel" *ngIf="selectedGroup() as group">
       <div class="section">
-        <div class="proposed-name">
-          <span class="label">Предлагаемое название:</span>
-          <span class="value">{{ selectedGroup()!.proposedName }}</span>
+        <div class="section-head">
+          <h3 class="section-title">{{ group.name }}</h3>
+          <span class="decision-chip">{{ getActionLabel(group.action) }}</span>
         </div>
-        <div class="duplicates-count">
-          Найдено дубликатов: {{ selectedGroup()!.duplicatesCount }}
+
+        <div class="facts-grid">
+          <div><span class="label">Вероятность дубля:</span> {{ getLikelihoodLabel(group.duplicateLikelihood) }}</div>
+          <div><span class="label">Макс. distance:</span> {{ group.maxDistance | number: '1.3-3' }}</div>
+          <div><span class="label">Записей:</span> {{ group.items.length }}</div>
+          <div><span class="label">К объединению:</span> {{ getSelectedDuplicatesCount(group) }}</div>
+          <div><span class="label">Игнорировать:</span> {{ getIgnoredDuplicatesCount(group) }}</div>
         </div>
+
         <div class="action-buttons">
+          <button pButton type="button" label="Объединить выбранные" (click)="onMerge(group)"></button>
           <button
             pButton
             type="button"
-            icon="pi pi-arrow-left"
-            class="p-button-text p-button-secondary"
-            [disabled]="true"
-            pTooltip="Отменить"
+            label="Игнорировать всю группу"
+            [outlined]="true"
+            (click)="onIgnore(group)"
           ></button>
-          <button
-            pButton
-            type="button"
-            icon="pi pi-arrow-right"
-            class="p-button-text p-button-secondary"
-            [disabled]="true"
-            pTooltip="Повторить"
-          ></button>
-          <button pButton type="button" label="Выбрать" (click)="onSelect()"></button>
-          <button pButton type="button" label="Объединить" (click)="onMerge()"></button>
-          <button pButton type="button" label="Разделить" (click)="onSplit()"></button>
         </div>
+
+        <p class="selection-hint" *ngIf="group.action === 'merge'">
+          Отмеченные записи будут объединены с базовой, снятые записи будут проигнорированы.
+        </p>
+        <p class="selection-hint" *ngIf="group.action === 'ignore'">
+          Для этой группы будет применено полное игнорирование независимо от чекбоксов.
+        </p>
+
+        <label class="input-label" for="suggested-name">Итоговое имя</label>
+        <input
+          id="suggested-name"
+          pInputText
+          [ngModel]="group.editedName"
+          (ngModelChange)="onSuggestedNameChange(group, $event)"
+          [disabled]="group.action === 'ignore'"
+        />
       </div>
 
       <div class="section">
-        <h3 class="section-title">Финальная строка:</h3>
-        <p-table [value]="[selectedGroup()!.finalString]" [tableStyle]="{ 'min-width': '50rem' }">
+        <h3 class="section-title">Состав группы</h3>
+        <p-table
+          [value]="group.items"
+          [tableStyle]="{ 'min-width': '40rem' }"
+        >
           <ng-template pTemplate="header">
             <tr>
-              <th>№</th>
-              <th>Артикул</th>
-              <th>Срок годности</th>
-              <th>Цена</th>
-              <th>Поставщик</th>
-              <th>Категория товара</th>
+              <th>Действие</th>
+              <th>Роль</th>
+              <th>ID</th>
+              <th>Значение</th>
+              <th>Distance</th>
             </tr>
           </ng-template>
-          <ng-template pTemplate="body" let-record>
+          <ng-template pTemplate="body" let-row>
             <tr>
-              <td>{{ record.id }}</td>
-              <td>{{ record.article }}</td>
-              <td>{{ record.shelfLife }}</td>
-              <td>{{ record.price }}</td>
-              <td>{{ record.supplier }}</td>
-              <td>{{ record.category }}</td>
-            </tr>
-          </ng-template>
-        </p-table>
-      </div>
-
-      <div class="section">
-        <h3 class="section-title">Строки дубликатов в БД:</h3>
-        <p-table [value]="selectedGroup()!.duplicates" [tableStyle]="{ 'min-width': '50rem' }">
-          <ng-template pTemplate="header">
-            <tr>
-              <th>№</th>
-              <th>Артикул</th>
-              <th>Срок годности</th>
-              <th>Цена</th>
-              <th>Поставщик</th>
-              <th>Категория товара</th>
-            </tr>
-          </ng-template>
-          <ng-template pTemplate="body" let-record>
-            <tr>
-              <td>{{ record.id }}</td>
-              <td>{{ record.article }}</td>
-              <td>{{ record.shelfLife }}</td>
-              <td>{{ record.price }}</td>
-              <td>{{ record.supplier }}</td>
-              <td>{{ record.category }}</td>
+              <td>
+                <ng-container *ngIf="row.isAnchor; else rowSelector">
+                  <span class="anchor-label">Оставить</span>
+                </ng-container>
+                <ng-template #rowSelector>
+                  <p-checkbox
+                    [binary]="true"
+                    [ngModel]="row.selected"
+                    [disabled]="group.action === 'ignore'"
+                    (ngModelChange)="onItemSelectionChange(group, row.itemId, $event)"
+                  ></p-checkbox>
+                </ng-template>
+              </td>
+              <td>{{ row.isAnchor ? 'Базовая запись' : 'Дубликат' }}</td>
+              <td>{{ row.itemId }}</td>
+              <td>{{ row.title }}</td>
+              <td>{{ row.distance | number: '1.3-3' }}</td>
             </tr>
           </ng-template>
         </p-table>
       </div>
 
       <div class="actions-bottom">
-        <button pButton type="button" label="Отменить" [outlined]="true" (click)="onCancel()"></button>
-        <button pButton type="button" label="Сохранить" (click)="onSave()"></button>
+        <button pButton type="button" label="Назад к процессу" [outlined]="true" (click)="onCancel()"></button>
+        <button
+          pButton
+          type="button"
+          label="Сохранить"
+          (click)="onSave()"
+          [loading]="isSaving()"
+        ></button>
       </div>
     </div>
   </div>
 </div>
 
+<ng-template #loadingState>
+  <div class="duplicates-correction-container">
+    <div class="header">
+      <h2>Загрузка рекомендаций...</h2>
+    </div>
+  </div>
+</ng-template>

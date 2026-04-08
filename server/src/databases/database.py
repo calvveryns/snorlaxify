@@ -1,11 +1,16 @@
 import json
 import logging
+import heapq
+import os
+import re
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional
 from enum import Enum
 
 import psycopg2
 from psycopg2.extras import Json
+from psycopg2 import sql
+from server.src.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -48,16 +53,444 @@ class DatabaseManager:
 
 
 class SourceDatabase(DatabaseManager):
-    def get_identifiers(self) -> List[str]:
+    @staticmethod
+    def _normalize_group_title(title: Optional[str]) -> str:
+        if not title:
+            return ""
+
+        normalized = title.lower()
+        normalized = normalized.replace("№", "")
+        normalized = re.sub(r"[()]", " ", normalized)
+        normalized = re.sub(r"[-_/]", " ", normalized)
+        normalized = re.sub(r"(?<=\d)\s*[xх]\s*(?=\d)", "x", normalized)
+        normalized = re.sub(r"(?<=\d)\s+(?=[a-zа-я])", "", normalized)
+        normalized = re.sub(r"[^\w\s]", " ", normalized)
+        normalized = re.sub(r"\s+", " ", normalized)
+        return normalized.strip()
+
+    @classmethod
+    def _extract_numeric_tokens(cls, title: Optional[str]) -> set[str]:
+        normalized = cls._normalize_group_title(title)
+        return set(re.findall(r"\d+(?:[.,]\d+)?", normalized))
+
+    @classmethod
+    def _extract_model_tokens(cls, title: Optional[str]) -> set[str]:
+        normalized = cls._normalize_group_title(title)
+        return {
+            token
+            for token in normalized.split()
+            if re.search(r"[a-zа-я]", token) and re.search(r"\d", token)
+        }
+
+    @classmethod
+    def _should_link_titles(cls, title_one: Optional[str], title_two: Optional[str]) -> bool:
+        normalized_one = cls._normalize_group_title(title_one)
+        normalized_two = cls._normalize_group_title(title_two)
+
+        if not normalized_one or not normalized_two:
+            return True
+
+        if normalized_one == normalized_two:
+            return True
+
+        numbers_one = cls._extract_numeric_tokens(title_one)
+        numbers_two = cls._extract_numeric_tokens(title_two)
+        if numbers_one and numbers_two and numbers_one != numbers_two:
+            return False
+
+        model_tokens_one = cls._extract_model_tokens(title_one)
+        model_tokens_two = cls._extract_model_tokens(title_two)
+        if model_tokens_one and model_tokens_two and model_tokens_one != model_tokens_two:
+            return False
+
+        return True
+
+    @staticmethod
+    def _select_group_anchor(
+        component: set[int],
+        items_by_vector_id: Dict[int, Dict[str, Any]],
+        edge_distances: Dict[int, Dict[int, float]],
+    ) -> int:
+        def average_distance(vector_id: int) -> float:
+            shortest_paths = SourceDatabase._shortest_path_distances(vector_id, component, edge_distances)
+            distances = [
+                shortest_paths[other_id]
+                for other_id in component
+                if other_id != vector_id and other_id in shortest_paths
+            ]
+            if not distances:
+                return float("inf")
+            return sum(distances) / len(distances)
+
+        return min(
+            component,
+            key=lambda vector_id: (
+                average_distance(vector_id),
+                -len(items_by_vector_id[vector_id]["title"] or ""),
+                vector_id,
+            ),
+        )
+
+    @staticmethod
+    def _shortest_path_distances(
+        anchor_vector_id: int,
+        component: set[int],
+        edge_distances: Dict[int, Dict[int, float]],
+    ) -> Dict[int, float]:
+        distances: Dict[int, float] = {anchor_vector_id: 0.0}
+        queue: list[tuple[float, int]] = [(0.0, anchor_vector_id)]
+
+        while queue:
+            current_distance, current_vector_id = heapq.heappop(queue)
+            if current_distance > distances.get(current_vector_id, float("inf")):
+                continue
+
+            for neighbour_id, edge_distance in edge_distances.get(current_vector_id, {}).items():
+                if neighbour_id not in component:
+                    continue
+
+                candidate_distance = current_distance + edge_distance
+                if candidate_distance < distances.get(neighbour_id, float("inf")):
+                    distances[neighbour_id] = candidate_distance
+                    heapq.heappush(queue, (candidate_distance, neighbour_id))
+
+        return distances
+
+    @classmethod
+    def _build_groups_from_neighbors(
+        cls,
+        rows: List[tuple[int, int, str]],
+        neighbour_rows: Dict[int, List[tuple[int, int, str, float]]],
+    ) -> List[Dict[str, Any]]:
+        items_by_vector_id = {
+            row[0]: {
+                "item_id": row[1],
+                "title": row[2],
+            }
+            for row in rows
+        }
+        adjacency: Dict[int, set[int]] = {row[0]: set() for row in rows}
+        edge_distances: Dict[int, Dict[int, float]] = {row[0]: {} for row in rows}
+
+        for base_vector_id, neighbours in neighbour_rows.items():
+            base_item = items_by_vector_id.get(base_vector_id)
+            if not base_item:
+                continue
+
+            for neighbour_vector_id, neighbour_item_id, neighbour_title, distance in neighbours:
+                neighbour_item = items_by_vector_id.get(neighbour_vector_id)
+                if not neighbour_item:
+                    continue
+
+                  # Temporarily disabled to evaluate pure embedding-based candidate generation.
+                  # if not cls._should_link_titles(base_item["title"], neighbour_title):
+                  #     continue
+
+                adjacency[base_vector_id].add(neighbour_vector_id)
+                adjacency[neighbour_vector_id].add(base_vector_id)
+
+                existing_distance = edge_distances[base_vector_id].get(neighbour_vector_id)
+                if existing_distance is None or distance < existing_distance:
+                    edge_distances[base_vector_id][neighbour_vector_id] = distance
+                    edge_distances[neighbour_vector_id][base_vector_id] = distance
+
+        groups: List[Dict[str, Any]] = []
+        visited: set[int] = set()
+
+        for vector_id, item_id, _title in rows:
+            if vector_id in visited:
+                continue
+
+            stack = [vector_id]
+            component: set[int] = set()
+
+            while stack:
+                current_vector_id = stack.pop()
+                if current_vector_id in visited:
+                    continue
+                visited.add(current_vector_id)
+                component.add(current_vector_id)
+                stack.extend(neighbour_id for neighbour_id in adjacency[current_vector_id] if neighbour_id not in visited)
+
+            if len(component) < 2:
+                continue
+
+            anchor_vector_id = cls._select_group_anchor(component, items_by_vector_id, edge_distances)
+            anchor_item = items_by_vector_id[anchor_vector_id]
+            path_distances = cls._shortest_path_distances(anchor_vector_id, component, edge_distances)
+            ordered_component = [anchor_vector_id] + sorted(
+                (member_id for member_id in component if member_id != anchor_vector_id),
+                key=lambda member_id: (
+                    path_distances.get(member_id, float("inf")),
+                    items_by_vector_id[member_id]["item_id"],
+                ),
+            )
+
+            group_items = []
+            for member_id in ordered_component:
+                member = items_by_vector_id[member_id]
+                group_items.append(
+                    {
+                        "item_id": member["item_id"],
+                        "title": member["title"],
+                        "distance": float(path_distances.get(member_id, 0.0 if member_id == anchor_vector_id else float("inf"))),
+                        "is_anchor": member_id == anchor_vector_id,
+                    }
+                )
+
+            groups.append(
+                {
+                    "anchor_item_id": anchor_item["item_id"],
+                    "items": group_items,
+                }
+            )
+
+        return groups
+
+    def reassign_item_references(self, cursor, source_item_id: int, target_item_id: int):
+        if source_item_id == target_item_id:
+            return
+
+        cursor.execute(
+            """
+                SELECT
+                    src_ns.nspname AS source_schema,
+                    src.relname AS source_table,
+                    src_att.attname AS source_column
+                FROM pg_constraint con
+                JOIN pg_class src
+                    ON src.oid = con.conrelid
+                JOIN pg_namespace src_ns
+                    ON src_ns.oid = src.relnamespace
+                JOIN pg_class tgt
+                    ON tgt.oid = con.confrelid
+                JOIN pg_namespace tgt_ns
+                    ON tgt_ns.oid = tgt.relnamespace
+                JOIN unnest(con.conkey) WITH ORDINALITY AS src_col(attnum, ord)
+                    ON TRUE
+                JOIN unnest(con.confkey) WITH ORDINALITY AS tgt_col(attnum, ord)
+                    ON src_col.ord = tgt_col.ord
+                JOIN pg_attribute src_att
+                    ON src_att.attrelid = src.oid
+                    AND src_att.attnum = src_col.attnum
+                JOIN pg_attribute tgt_att
+                    ON tgt_att.attrelid = tgt.oid
+                    AND tgt_att.attnum = tgt_col.attnum
+                WHERE con.contype = 'f'
+                    AND tgt_ns.nspname = 'public'
+                    AND tgt.relname = 'items'
+                    AND tgt_att.attname = 'id'
+                    AND cardinality(con.conkey) = 1
+                    AND cardinality(con.confkey) = 1
+            """
+        )
+        references = cursor.fetchall()
+
+        for source_schema, source_table, source_column in references:
+            update_sql = sql.SQL("""
+                UPDATE {schema}.{table}
+                SET {column} = %s
+                WHERE {column} = %s
+            """).format(
+                schema=sql.Identifier(source_schema),
+                table=sql.Identifier(source_table),
+                column=sql.Identifier(source_column),
+            )
+            cursor.execute(update_sql, (target_item_id, source_item_id))
+
+    @staticmethod
+    def normalize_pipeline_result(recommendations: Any) -> Dict[str, Any]:
+        if recommendations is None:
+            return {"results": []}
+
+        if isinstance(recommendations, str):
+            try:
+                recommendations = json.loads(recommendations)
+            except json.JSONDecodeError:
+                return {"results": [], "message": recommendations}
+
+        if isinstance(recommendations, list):
+            return {"results": recommendations}
+
+        if isinstance(recommendations, dict):
+            results = recommendations.get("results")
+            message = recommendations.get("message")
+            if isinstance(results, list):
+                payload: Dict[str, Any] = {"results": results}
+                if message:
+                    payload["message"] = message
+                return payload
+
+            if all(key in recommendations for key in ("title_one", "title_two", "distance")):
+                return {"results": [recommendations]}
+
+            if message:
+                return {"results": [], "message": message}
+
+        return {"results": [], "message": "Unsupported recommendations payload"}
+
+    @staticmethod
+    def filter_unresolved_recommendations(
+        recommendations: Any,
+        pairs_to_resolve: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        normalized = SourceDatabase.normalize_pipeline_result(recommendations)
+        results = normalized.get("results", [])
+        if not results or not pairs_to_resolve:
+            return normalized
+
+        def apply_group_resolution(
+            recommendation: Dict[str, Any],
+            payload: Dict[str, Any],
+        ) -> Optional[Dict[str, Any]]:
+            recommendation_items = recommendation.get("items")
+            payload_items = payload.get("items")
+            if not isinstance(recommendation_items, list) or not isinstance(payload_items, list):
+                return recommendation
+
+            recommendation_item_ids = [
+                item.get("item_id")
+                for item in recommendation_items
+                if item.get("item_id") is not None
+            ]
+            payload_item_ids = [
+                item.get("item_id")
+                for item in payload_items
+                if item.get("item_id") is not None
+            ]
+            if len(recommendation_item_ids) < 2 or len(payload_item_ids) < 2:
+                return recommendation
+
+            recommendation_anchor_id = (
+                recommendation.get("anchor_item_id") or recommendation_item_ids[0]
+            )
+            payload_anchor_id = payload.get("anchor_item_id") or payload_item_ids[0]
+            if recommendation_anchor_id != payload_anchor_id:
+                return recommendation
+
+            if not set(payload_item_ids).issubset(set(recommendation_item_ids)):
+                return recommendation
+
+            resolved_duplicate_ids = {
+                item_id
+                for item_id in payload_item_ids
+                if item_id != recommendation_anchor_id
+            }
+            if not resolved_duplicate_ids:
+                return recommendation
+
+            remaining_items = [
+                item
+                for item in recommendation_items
+                if item.get("item_id") not in resolved_duplicate_ids
+            ]
+            if len(remaining_items) < 2:
+                return None
+
+            updated_recommendation = dict(recommendation)
+            updated_recommendation["items"] = remaining_items
+            return updated_recommendation
+
+        def pair_key(payload: Dict[str, Any]) -> tuple[Any, ...]:
+            items = payload.get("items")
+            if isinstance(items, list) and items:
+                item_ids = tuple(
+                    item.get("item_id")
+                    for item in items
+                    if item.get("item_id") is not None
+                )
+                if item_ids:
+                    return ("group", *item_ids)
+
+            if payload.get("item_one_id") is not None and payload.get("item_two_id") is not None:
+                return ("id", payload.get("item_one_id"), payload.get("item_two_id"))
+            return ("title", payload.get("title_one"), payload.get("title_two"))
+
+        resolved_keys = {pair_key(pair) for pair in pairs_to_resolve}
+
+        remaining_results = []
+        for recommendation in results:
+            current_recommendation: Optional[Dict[str, Any]] = recommendation
+
+            for pair in pairs_to_resolve:
+                if current_recommendation is None:
+                    break
+                current_recommendation = apply_group_resolution(current_recommendation, pair)
+
+            if current_recommendation is None:
+                continue
+
+            if pair_key(current_recommendation) in resolved_keys:
+                continue
+
+            remaining_results.append(current_recommendation)
+
+        payload: Dict[str, Any] = {"results": remaining_results}
+        if normalized.get("message"):
+            payload["message"] = normalized["message"]
+        return payload
+
+    def get_identifiers(self) -> List[Dict[str, Any]]:
         with self.get_cursor() as (cursor, conn):
             cursor.execute("""
-                SELECT (name::json->>'en') AS name
+                SELECT
+                    id,
+                    COALESCE(name::json->>'en', name::json->>'ru') AS name,
+                    path::text AS path,
+                    "typeId",
+                    "typeIdentifier",
+                    "updatedAt"
                 FROM items
-                WHERE "typeId" = 7
-                AND "deletedAt" IS NULL
+                WHERE "deletedAt" IS NULL
             """)
             rows = cursor.fetchall()
-            return [row[0] for row in rows]
+            return [
+                {
+                    "item_id": row[0],
+                    "name": row[1],
+                    "path": row[2],
+                    "type_id": row[3],
+                    "type_identifier": row[4],
+                    "updated_at": row[5],
+                }
+                for row in rows
+                if row[1]
+            ]
+
+    def get_identifiers_with_vector_metadata(self) -> List[Dict[str, Any]]:
+        with self.get_cursor() as (cursor, conn):
+            cursor.execute("""
+                SELECT
+                    i.id,
+                    COALESCE(i.name::json->>'en', i.name::json->>'ru') AS name,
+                    i.path::text AS path,
+                    i."typeId",
+                    i."typeIdentifier",
+                    i."updatedAt",
+                    vd.input_hash,
+                    vd.model,
+                    vd.source_updated_at
+                FROM items AS i
+                LEFT JOIN vector_data AS vd
+                    ON vd.item_id = i.id
+                WHERE i."deletedAt" IS NULL
+            """)
+            rows = cursor.fetchall()
+            return [
+                {
+                    "item_id": row[0],
+                    "name": row[1],
+                    "path": row[2],
+                    "type_id": row[3],
+                    "type_identifier": row[4],
+                    "updated_at": row[5],
+                    "stored_vector_input_hash": row[6],
+                    "vector_model": row[7],
+                    "vector_source_updated_at": row[8],
+                }
+                for row in rows
+                if row[1]
+            ]
 
     def setup_vector_extension(self):
         with self.get_cursor() as (cursor, conn):
@@ -68,46 +501,128 @@ class SourceDatabase(DatabaseManager):
         create_table_sql = """
             CREATE TABLE IF NOT EXISTS vector_data (
                 id SERIAL PRIMARY KEY,
-                identifier TEXT UNIQUE NOT NULL,
-                vector vector(768) NOT NULL
+                item_id BIGINT UNIQUE NOT NULL,
+                identifier TEXT NOT NULL,
+                vector vector(768) NOT NULL,
+                input_hash TEXT,
+                source_updated_at TIMESTAMPTZ,
+                vectorized_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                model TEXT
             )
         """
         with self.get_cursor() as (cursor, conn):
             cursor.execute(create_table_sql)
+            cursor.execute(
+                "ALTER TABLE vector_data ADD COLUMN IF NOT EXISTS item_id BIGINT"
+            )
+            cursor.execute(
+                "ALTER TABLE vector_data ADD COLUMN IF NOT EXISTS identifier TEXT"
+            )
+            cursor.execute(
+                "ALTER TABLE vector_data ADD COLUMN IF NOT EXISTS input_hash TEXT"
+            )
+            cursor.execute(
+                "ALTER TABLE vector_data ADD COLUMN IF NOT EXISTS source_updated_at TIMESTAMPTZ"
+            )
+            cursor.execute(
+                "ALTER TABLE vector_data ADD COLUMN IF NOT EXISTS vectorized_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP"
+            )
+            cursor.execute(
+                "ALTER TABLE vector_data ADD COLUMN IF NOT EXISTS model TEXT"
+            )
+            cursor.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_vector_data_item_id ON vector_data(item_id)"
+            )
+            cursor.execute(
+                "ALTER TABLE vector_data DROP CONSTRAINT IF EXISTS vector_data_identifier_key"
+            )
+            cursor.execute(
+                "DROP INDEX IF EXISTS vector_data_identifier_key"
+            )
             conn.commit()
 
-    def insert_or_update_vector(self, identifier: str, vector: List[float]):
+    def insert_or_update_vector(
+        self,
+        item_id: int,
+        identifier: str,
+        vector: List[float],
+        input_hash: Optional[str] = None,
+        source_updated_at: Optional[Any] = None,
+        model: Optional[str] = None,
+    ):
         insert_sql = """
-            INSERT INTO vector_data (identifier, vector)
-            VALUES (%s, %s)
-            ON CONFLICT (identifier) DO UPDATE
-            SET vector = EXCLUDED.vector
+            INSERT INTO vector_data (
+                item_id,
+                identifier,
+                vector,
+                input_hash,
+                source_updated_at,
+                vectorized_at,
+                model
+            )
+            VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
+            ON CONFLICT (item_id) DO UPDATE
+            SET identifier = EXCLUDED.identifier,
+                vector = EXCLUDED.vector,
+                input_hash = EXCLUDED.input_hash,
+                source_updated_at = EXCLUDED.source_updated_at,
+                vectorized_at = CURRENT_TIMESTAMP,
+                model = EXCLUDED.model
         """
         with self.get_cursor() as (cursor, conn):
-            cursor.execute(insert_sql, (identifier, vector))
+            cursor.execute(
+                insert_sql,
+                (item_id, identifier, vector, input_hash, source_updated_at, model),
+            )
             conn.commit()
 
-    def get_close_pairs(self) -> List[Dict[str, float]]:
-        query_sql = """
+    def get_close_groups(self) -> List[Dict[str, Any]]:
+        query_items_sql = """
+            SELECT id, item_id, identifier
+            FROM vector_data
+            ORDER BY id
+        """
+        query_group_sql = """
             SELECT
-                item_one.identifier AS title_one,
-                item_two.identifier AS title_two,
-                item_one.vector <=> item_two.vector AS distance
-            FROM vector_data AS item_one
-            JOIN vector_data AS item_two
-                ON item_one.id < item_two.id
-            WHERE (item_one.vector <=> item_two.vector) <= 0.15
-            ORDER BY distance;
+                other.id,
+                other.item_id,
+                other.identifier,
+                base.vector <=> other.vector AS distance
+            FROM vector_data AS base
+            JOIN vector_data AS other
+                ON other.id <> base.id
+            WHERE base.id = %s
+                AND (base.vector <=> other.vector) < %s
+            ORDER BY distance, other.id
+            LIMIT %s
         """
         with self.get_cursor() as (cursor, conn):
-            cursor.execute(query_sql)
+            cursor.execute(query_items_sql)
             rows = cursor.fetchall()
-            return [
-                {"title_one": row[0], "title_two": row[1], "distance": float(row[2])}
-                for row in rows
-            ]
+            neighbour_rows: Dict[int, List[tuple[int, int, str, float]]] = {}
+            top_k = max(1, int(os.getenv("DUPLICATE_GROUP_TOP_K", "10")))
+
+            for base_vector_id, _item_id, _identifier in rows:
+                cursor.execute(
+                    query_group_sql,
+                    (
+                        base_vector_id,
+                        settings.duplicate_distance_threshold,
+                        top_k,
+                    ),
+                )
+                neighbour_rows[base_vector_id] = [
+                    (row[0], row[1], row[2], float(row[3]))
+                    for row in cursor.fetchall()
+                ]
+
+            return self._build_groups_from_neighbors(rows, neighbour_rows)
 
     def create_pipeline_tables(self):
+        create_archive_table = """
+            CREATE TABLE IF NOT EXISTS items_archive (LIKE items INCLUDING ALL)
+        """
+
         create_tasks_table = """
             CREATE TABLE IF NOT EXISTS pipeline_tasks (
                 id SERIAL PRIMARY KEY,
@@ -140,6 +655,7 @@ class SourceDatabase(DatabaseManager):
         """
 
         with self.get_cursor() as (cursor, conn):
+            cursor.execute(create_archive_table)
             cursor.execute(create_tasks_table)
             cursor.execute(create_results_table)
             cursor.execute(create_indexes)
@@ -252,21 +768,8 @@ class SourceDatabase(DatabaseManager):
                 for row in rows
             ]
 
-    @staticmethod
-    def _to_json_payload(recommendations: Any) -> Any:
-        if recommendations is None:
-            return None
-        if isinstance(recommendations, (dict, list)):
-            return recommendations
-        if isinstance(recommendations, str):
-            try:
-                return json.loads(recommendations)
-            except json.JSONDecodeError:
-                return {"message": recommendations}
-        return {"value": recommendations}
-
     def save_pipeline_result(self, task_id: str, recommendations: Any, error: Optional[str] = None):
-        payload = self._to_json_payload(recommendations)
+        payload = self.normalize_pipeline_result(recommendations)
         insert_sql = """
             INSERT INTO pipeline_results (task_id, recommendations, error, updated_at)
             VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
@@ -293,11 +796,25 @@ class SourceDatabase(DatabaseManager):
                 cursor.execute(select_sql, (task_id,))
                 row = cursor.fetchone()
                 if row and row[0]:
-                    return row[0]
+                    return self.normalize_pipeline_result(row[0])
                 return None
         except Exception as e:
             logger.error(f"Error getting pipeline result for task {task_id}: {e}")
             return None
+
+    def remove_resolved_pairs_from_result(self, task_id: str, pairs_to_resolve: List[Dict[str, Any]]):
+        if not pairs_to_resolve:
+            return
+
+        recommendations = self.get_pipeline_final_result(task_id)
+        if recommendations is None:
+            return
+
+        remaining_recommendations = self.filter_unresolved_recommendations(
+            recommendations,
+            pairs_to_resolve,
+        )
+        self.save_pipeline_result(task_id, remaining_recommendations)
 
     def resolve_pipeline_result(self, pairs_to_resolve: List[Dict[str, Any]]) -> int:
         if not pairs_to_resolve:
@@ -307,37 +824,182 @@ class SourceDatabase(DatabaseManager):
 
         with self.get_cursor() as (cursor, conn):
             for pair in pairs_to_resolve:
-                title_one = pair.get("title_one")
-                title_two = pair.get("title_two")
-                suggest_name = pair.get("suggest_name")
+                items = pair.get("items")
+                if isinstance(items, list) and items:
+                    item_ids = [
+                        item.get("item_id")
+                        for item in items
+                        if item.get("item_id") is not None
+                    ]
+                    if len(item_ids) < 2:
+                        continue
 
-                if not title_one or not title_two:
+                    anchor_item_id = pair.get("anchor_item_id") or item_ids[0]
+                    duplicate_item_ids = [
+                        item_id for item_id in item_ids
+                        if item_id != anchor_item_id
+                    ]
+                    suggested_name = pair.get("suggested_name") or pair.get("suggest_name")
+                    action = pair.get("action", "merge")
+
+                    if not duplicate_item_ids:
+                        continue
+
+                    if action == "ignore":
+                        processed_count += 1
+                        continue
+
+                    for duplicate_item_id in duplicate_item_ids:
+                        self.reassign_item_references(cursor, duplicate_item_id, anchor_item_id)
+
+                    if suggested_name:
+                        update_name_sql = """
+                            UPDATE items
+                            SET name = CASE
+                                WHEN name ? 'ru' AND name ? 'en' THEN
+                                    jsonb_set(
+                                        jsonb_set(name, '{ru}', to_jsonb(%s::text)),
+                                        '{en}',
+                                        to_jsonb(%s::text)
+                                    )
+                                WHEN name ? 'ru' THEN
+                                    jsonb_set(
+                                        jsonb_set(name, '{ru}', to_jsonb(%s::text)),
+                                        '{en}',
+                                        to_jsonb(%s::text),
+                                        true
+                                    )
+                                WHEN name ? 'en' THEN
+                                    jsonb_set(name, '{en}', to_jsonb(%s::text))
+                                ELSE
+                                    jsonb_build_object('en', %s::text)
+                            END
+                            WHERE id = %s
+                            AND "deletedAt" IS NULL
+                        """
+                        cursor.execute(
+                            update_name_sql,
+                            (
+                                suggested_name,
+                                suggested_name,
+                                suggested_name,
+                                suggested_name,
+                                suggested_name,
+                                suggested_name,
+                                anchor_item_id,
+                            ),
+                        )
+
+                        update_vector_sql = """
+                            UPDATE vector_data
+                            SET identifier = %s
+                            WHERE item_id = %s
+                        """
+                        cursor.execute(update_vector_sql, (suggested_name, anchor_item_id))
+
+                    archive_and_delete_sql = """
+                        WITH moved_rows AS (
+                            DELETE FROM items
+                            WHERE id = %s
+                            AND "deletedAt" IS NULL
+                            RETURNING *
+                        )
+                        INSERT INTO items_archive
+                        SELECT *
+                        FROM moved_rows
+                    """
+                    for duplicate_item_id in duplicate_item_ids:
+                        cursor.execute(archive_and_delete_sql, (duplicate_item_id,))
+                        if cursor.rowcount > 0:
+                            vector_delete_sql = """
+                                DELETE FROM vector_data
+                                WHERE item_id = %s
+                            """
+                            cursor.execute(vector_delete_sql, (duplicate_item_id,))
+
+                    processed_count += 1
                     continue
 
-                if suggest_name:
+                item_one_id = pair.get("item_one_id")
+                item_two_id = pair.get("item_two_id")
+                title_one = pair.get("title_one")
+                title_two = pair.get("title_two")
+                suggested_name = pair.get("suggested_name") or pair.get("suggest_name")
+                action = pair.get("action", "merge")
+
+                if item_one_id is None or item_two_id is None or not title_one or not title_two:
+                    continue
+
+                if action == "ignore":
+                    processed_count += 1
+                    continue
+
+                self.reassign_item_references(cursor, item_two_id, item_one_id)
+
+                if suggested_name:
                     update_name_sql = """
                         UPDATE items
-                        SET name = jsonb_set(name, '{en}', to_jsonb(%s::text))
-                        WHERE (name::json->>'en') = %s
+                        SET name = CASE
+                            WHEN name ? 'ru' AND name ? 'en' THEN
+                                jsonb_set(
+                                    jsonb_set(name, '{ru}', to_jsonb(%s::text)),
+                                    '{en}',
+                                    to_jsonb(%s::text)
+                                )
+                            WHEN name ? 'ru' THEN
+                                jsonb_set(
+                                    jsonb_set(name, '{ru}', to_jsonb(%s::text)),
+                                    '{en}',
+                                    to_jsonb(%s::text),
+                                    true
+                                )
+                            WHEN name ? 'en' THEN
+                                jsonb_set(name, '{en}', to_jsonb(%s::text))
+                            ELSE
+                                jsonb_build_object('en', %s::text)
+                        END
+                        WHERE id = %s
                         AND "deletedAt" IS NULL
                     """
-                    cursor.execute(update_name_sql, (suggest_name, title_one))
+                    cursor.execute(
+                        update_name_sql,
+                        (
+                            suggested_name,
+                            suggested_name,
+                            suggested_name,
+                            suggested_name,
+                            suggested_name,
+                            suggested_name,
+                            item_one_id,
+                        ),
+                    )
 
-                delete_sql = """
-                    UPDATE items
-                    SET "deletedAt" = CURRENT_TIMESTAMP
-                    WHERE (name::json->>'en') = %s
-                    AND "typeId" = 7
-                    AND "deletedAt" IS NULL
+                    update_vector_sql = """
+                        UPDATE vector_data
+                        SET identifier = %s
+                        WHERE item_id = %s
+                    """
+                    cursor.execute(update_vector_sql, (suggested_name, item_one_id))
+
+                archive_and_delete_sql = """
+                    WITH moved_rows AS (
+                        DELETE FROM items
+                        WHERE id = %s
+                        AND "deletedAt" IS NULL
+                        RETURNING *
+                    )
+                    INSERT INTO items_archive
+                    SELECT *
+                    FROM moved_rows
                 """
-                cursor.execute(delete_sql, title_two)
+                cursor.execute(archive_and_delete_sql, (item_two_id,))
 
                 if cursor.rowcount > 0:
                     vector_delete_sql = """
                         DELETE FROM vector_data
-                        WHERE identifier = %s
+                        WHERE item_id = %s
                     """
-                    cursor.execute(vector_delete_sql, title_two)
+                    cursor.execute(vector_delete_sql, (item_two_id,))
                     processed_count += 1
 
             conn.commit()

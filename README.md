@@ -444,3 +444,33 @@ docker-compose down -v
 - `pipeline_tasks` — задачи pipeline
 - `pipeline_results` — результаты выполнения pipeline
 - `product_vectors` — векторные представления продуктов
+## Embedding Benchmark
+
+Для замера embedding-модели на размеченном тестовом наборе добавлен runner `server/measure_embedding_benchmark.py`.
+
+Пример запуска:
+
+```bash
+python server/measure_embedding_benchmark.py datasets/benchmark/example_labeled_dataset.json
+```
+
+Если нужно явно указать локальную модель и процесс для замера памяти:
+
+```bash
+python server/measure_embedding_benchmark.py \
+  datasets/benchmark/example_labeled_dataset.json \
+  --vectorizer-url http://localhost:11434/api/embed \
+  --vectorizer-model embeddinggemma:latest \
+  --model-process-name ollama
+```
+
+Скрипт возвращает JSON со следующими ключевыми метриками:
+- `avg_positive_pair_cosine_similarity` — среднее cosine similarity по всем парам `is_duplicate=true`
+- `avg_embedding_latency_ms` — среднее время одного вызова embedding API
+- `memory_usage.ram_bytes` / `memory_usage.vram_bytes` — RAM/VRAM процесса модели, если процесс удалось определить
+- `nearest_neighbor_duplicate_rate` — доля записей, у которых ближайший сосед действительно является true-дубликатом
+
+Интерпретация:
+- для `nearest_neighbor_duplicate_rate` учитываются только записи, у которых в разметке есть хотя бы один true-дубликат
+- если процесс модели не указан и не выводится автоматически, блок `memory_usage` может быть `null`
+- для локального Ollama по `localhost:11434` имя процесса пытается определиться автоматически как `ollama`
